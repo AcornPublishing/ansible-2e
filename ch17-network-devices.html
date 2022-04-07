@@ -1,0 +1,998 @@
+<section data-type="chapter" id="ansible_network">
+<h1>Ansible for Network Devices</h1>
+
+
+<p>Managing and configuring network devices always makes me feel nostalgic.<a data-type="indexterm" id="ix_netdev" data-primary="network devices, Ansible for"/> Log in to a console by telnet, type some commands, save the configuration to startup config, and you&#8217;re done. This workflow hasn&#8217;t changed much since the introduction of these devices. OK, to be fair, there were some changes, such as supporting SSH.</p>
+
+<p>For a long time, we basically had two types of management strategies for network devices:</p>
+
+<ul>
+<li>
+<p>Buy an expensive proprietary software that configures your devices.</p>
+</li>
+<li>
+<p>Develop minimal tooling around your configuration files: back up your configs locally, make some changes by editing them, and copy the result back onto the devices through the console.</p>
+</li>
+</ul>
+
+<p>However, in the last few years, we have seen some movement in this space. The first thing I noticed was that network device vendors have started to create or open their APIs for everyone. The second thing is that the so-called <em>DevOps</em> movement did not stop going lower down the stack, to the core: hardware servers, load-balancer appliances, firewall appliances, network devices, and even routers.<a data-type="indexterm" data-primary="DevOps movement"/></p>
+
+<p>In my opinion, Ansible for network devices is the one of the most promising solutions to manage <a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="reasons for using Ansible"/>network devices, for three reasons:</p>
+
+<ul>
+<li>
+<p>Ansible supports network devices with console-only access through SSH, and is not limited to vendor APIs.</p>
+</li>
+<li>
+<p>Any network operator can get productive in hours or less, as the way the modules are written is similar to what a network operator is used to doing.</p>
+</li>
+<li>
+<p>Ansible is open source software. We can use it here and now!</p>
+</li>
+</ul>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Status of Network Modules</h1>
+
+<p>Before we get our hands dirty, some words of warning: the implementation of network modules is pretty new, still in development, and marked as <em>preview</em> by Ansible.<a data-type="indexterm" data-primary="modules" data-secondary="network, status of"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="status of network modules"/> Things may change (and improve) over time. But this should not hold us back; we can already take advantage of what&#8217;s there.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>List of Network Vendors Supported</h1>
+
+<p>The first question you&#8217;ll probably ask is, is my preferred vendor or network operating system supported? Here is the incomplete but already impressive list of supported network vendors<a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="supported network vendors"/> and operating systems:</p>
+
+<ul>
+<li>
+<p>Cisco ASA, IOS, IOS XR, NX-OS</p>
+</li>
+<li>
+<p>Juniper Junos OS</p>
+</li>
+<li>
+<p>Dell Networking OS 6, 9, and 10</p>
+</li>
+<li>
+<p>Cumulus</p>
+</li>
+<li>
+<p>A10 Networks</p>
+</li>
+<li>
+<p>F5 Networks</p>
+</li>
+<li>
+<p>Arista EOS</p>
+</li>
+<li>
+<p>VyOS</p>
+</li>
+</ul>
+
+<p>If your vendor is not on this list, please check the documentation for the latest list because development is proceeding quickly! At the time of writing, Ansible contains about 200 modules related to network devices.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Preparing Our Network Device</h1>
+
+<p>Before we can start playing with the network modules, we obviously need a network device.<a data-type="indexterm" id="ix_netdevprep" data-primary="network devices, Ansible for" data-secondary="preparing our network device"/></p>
+
+<p>I asked for a network device, and all I got was this, well, not lousy, but most likely outdated, or let&#8217;s say old and noisy Cisco Catalyst 2960G Series Layer 2 switch running IOS.<a data-type="indexterm" data-primary="iOS, Cisco Catalyst switch running"/><a data-type="indexterm" id="ix_Ciscoswitch" data-primary="Cisco Catalyst 2960G Series Layer 2 switch running iOS, configuring with Ansible"/> The device is End-of-Life since 2013. While the device might not be that remarkable, it is remarkable that this old thing is still manageable through Ansible!</p>
+
+<p>First things first: before we can configure the switch by using Ansible, we must be able to connect to it. And here comes our first obstacle, as the device listens to telnet only when configured with the factory settings.<a data-type="indexterm" data-primary="telnet" data-secondary="using for Cisco switch configuration"/> We must bring it to the point that it listens for SSH connections. We really should not be using the telnet protocol for production work.</p>
+<div data-type="note">
+<p>Ansible is not able to connect to network devices via telnet.</p>
+</div>
+
+<p>I am sure some of you may already have configured your switches and routers to listen to SSH. That said, I wouldn&#8217;t call myself a typical network engineer; it took a while to figure out how to enable SSH on my Catalyst.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Enable SSH Authentication</h2>
+
+<p>For enabling SSH, we need to carry out a few steps.<a data-type="indexterm" id="ix_authSSH" data-primary="authentication" data-secondary="SSH, enabling on Cisco Catalyst switch"/><a data-type="indexterm" id="ix_SSHswitch" data-primary="SSH" data-secondary="enabling SSH authentication on Cisco Catalyst switch"/> The commands we are going to use should work on most IOS devices, but they can vary a bit. However, this is nothing to worry about, as we can always get the options available on the console by typing a question mark (<code>?</code>).</p>
+
+<p>Our Cisco switch is factory reset, and I put it into <em>Express Setup</em> mode.<a data-type="indexterm" data-primary="Express Setup mode"/> As I am on Linux, logging into the device by telnet is just one command away; see <a data-type="xref" href="#telnet_login"/>.</p>
+<div id="telnet_login" data-type="example">
+<h5>Log in by telnet</h5>
+
+<pre data-type="programlisting">$ telnet 10.0.0.1
+Trying 10.0.0.1...
+Connected to 10.0.0.1.
+Escape character is '^]'.
+Switch#</pre></div>
+
+<p>To configure the device, we need to get into <em>configuration</em> mode,<a data-type="indexterm" data-primary="configuration mode"/> just as in <a data-type="xref" href="#configuration_mode"/>. Sounds obvious, doesn&#8217;t it?</p>
+<div id="configuration_mode" data-type="example">
+<h5>Switch to configuration mode</h5>
+
+<pre data-type="programlisting">switch1#configure
+Configuring from terminal, memory, or network [terminal]? terminal
+Enter configuration commands, one per line.  End with CNTL/Z.</pre></div>
+
+<p>The first configuration is to give it an IP, as shown in <a data-type="xref" href="#configure_ip"/>, so we will be able to log in afterward when all is configured.</p>
+<div id="configure_ip" data-type="example">
+<h5>Configure a static IP</h5>
+
+<pre data-type="programlisting">switch1(config)#interface vlan 1
+switch1(config-if)#ip address 10.0.0.10 255.255.255.0</pre></div>
+
+<p>In order to generate an RSA key, we need to give it a hostname and a domain name,<a data-type="indexterm" data-primary="RSA keys, generating"/> as shown in <a data-type="xref" href="#hostname"/>.</p>
+<div id="hostname" data-type="example">
+<h5>Set a hostname and domain</h5>
+
+<pre data-type="programlisting">Switch(config)#hostname switch1
+switch1(config)#ip domain-name example.net
+switch1(config)#</pre></div>
+
+<p>Once this is done, we are able generate the <em>crypto</em> key as shown in <a data-type="xref" href="#crypto"/>. At the time of this writing, the documentation recommends that we should not generate RSA keys with a size smaller than 2,048 bits.</p>
+<div id="crypto" data-type="example">
+<h5>Generate RSA bits—this can take a while</h5>
+
+<pre data-type="programlisting">switch1(config)#crypto key generate rsa
+The name for the keys will be: switch1.example.net
+Choose the size of the key modulus in the range of 360 to 4096 for your
+  General Purpose Keys. Choosing a key modulus greater than 512 may take
+  a few minutes.
+
+How many bits in the modulus [512]: 4096
+% Generating 4096 bit RSA keys, keys will be non-exportable...
+[OK] (elapsed time was 164 seconds)
+
+switch1(config)#</pre></div>
+
+<p>You may notice that we are connected to the device by telnet without any authentication. SSH, on the other hand, will ask for a username and password.</p>
+
+<p>The next step, as shown in <a data-type="xref" href="#user"/>, is to add a new user with a username and password. Additionally, we grant it <em>privilege</em> level 15 (highest level).</p>
+<div data-type="warning">
+<p>You can set the password in two ways, as <code>secret</code> or as <code>password</code>. The <code>password</code> will store it in plain text, while <code>secret</code> will store it as a hash sum, depending on your device and firmware version.</p>
+</div>
+<div id="user" data-type="example">
+<h5>Add a new user admin</h5>
+
+<pre data-type="programlisting">switch1(config)#username admin privilege 15 secret s3cr3t</pre></div>
+
+<p>The last step, as shown in <a data-type="xref" href="#aaa"/>, is to configure the authentication model. Our switch is running in the <em>old model</em> per default. In this mode, it will prompt only for the password.</p>
+
+<p>However, we want to be prompted not only for password, but also for the username; this is called the <em>new model of authentication, authorization, and accounting</em> (<code>aaa</code>).</p>
+<div id="aaa" data-type="example">
+<h5>Configure the authentication model</h5>
+
+<pre data-type="programlisting">switch1(config)#aaa new-model</pre></div>
+
+<p>In addition, we are also going to set a password for <code>enable</code> in <a data-type="xref" href="#enable"/> just to demonstrate that Ansible can handle this as well.</p>
+<div id="enable" data-type="example">
+<h5>Set a password for <em>enable</em></h5>
+
+<pre data-type="programlisting">switch1(config)#enable secret 3n4bl3s3cr3t</pre></div>
+
+<p>Once this all is done, there is no need to run this insecure plain-text telnet protocol anymore, so let&#8217;s disable it, as we do in <a data-type="xref" href="#disable_telnet"/>, on any of our 16 virtual <span class="keep-together">terminals</span>.<a data-type="indexterm" data-primary="telnet" data-secondary="disabling on Cisco switch"/></p>
+<div id="disable_telnet" data-type="example">
+<h5>Disable telnet on the device</h5>
+
+<pre data-type="programlisting">switch1(config)#line vty 0 15
+switch1(config-line)#transport input ?
+  all     All protocols
+  none    No protocols
+  ssh     TCP/IP SSH protocol
+  telnet  TCP/IP Telnet protocol
+
+switch1(config-line)#transport input ssh
+switch1(config-line)#exit</pre></div>
+
+<p>That&#8217;s it. Let&#8217;s end the config and save the config as shown in <a data-type="xref" href="#save_config"/>. Note that after this step, you may lose your existing connection, but this is not a problem.</p>
+<div id="save_config" data-type="example">
+<h5>Save to config to be used as startup config</h5>
+
+<pre data-type="programlisting">switch1#copy running-config startup-config
+Destination filename [startup-config]?</pre></div>
+
+<p>It is time to verify that SSH is set up and telnet is disabled, as shown in <a data-type="xref" href="#ssh_login"/>.</p>
+<div id="ssh_login" data-type="example">
+<h5>Log in by SSH</h5>
+
+<pre data-type="programlisting">$ telnet 10.0.0.10
+Trying 10.0.0.10...
+telnet: Unable to connect to remote host: Connection refused
+$ ssh admin@10.0.0.10
+Password:
+
+switch01&gt;</pre></div>
+
+<p>Great, it works!<a data-type="indexterm" data-primary="authentication" data-secondary="SSH, enabling on Cisco Catalyst switch" data-startref="ix_authSSH"/><a data-type="indexterm" data-primary="SSH" data-secondary="enabling SSH authentication on Cisco Catalyst switch" data-startref="ix_SSHswitch"/><a data-type="indexterm" data-primary="Cisco Catalyst 2960G Series Layer 2 switch running iOS, configuring with Ansible" data-startref="ix_Ciscoswitch"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="preparing our network device" data-startref="ix_netdevprep"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>How the Modules Work</h1>
+
+<p>Before we get to our first playbook, let&#8217;s step back and talk a bit about Ansible modules.<a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="how Ansible modules work"/><a data-type="indexterm" data-primary="modules" data-secondary="how Ansible modules work"/> A simplified view of how Ansible works when running a playbook is that the module used in the task gets copied to the target machine and executed there.</p>
+
+<p>When we look back to the network modules, this procedure would not work for a network device.<a data-type="indexterm" data-primary="Python" data-secondary="network modules and Python interpreter"/> They usually don&#8217;t have a Python interpreter installed, or at least it is not usable for us. That is why network modules work a bit differently than ordinary Ansible modules.</p>
+
+<p>We can compare them with modules dealing with HTTP APIs. Ansible modules using HTTP APIs are usually executed locally, as they run the Python code locally in which they talk by HTTP to the API. Network modules work pretty much the same way, except they do not talk HTTP but with a console!</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Our First Playbook</h1>
+
+<p>In our first playbook, I plan to keep it simple, changing the hostname.<a data-type="indexterm" id="ix_netdevplay" data-primary="network devices, Ansible for" data-secondary="playbook setting hostname on Cisco Catalyst"/><a data-type="indexterm" data-primary="iOS, Cisco Catalyst switch running" data-secondary="setting hostname on"/></p>
+
+<p>Because our network device is running the Cisco IOS operating system, we are going to use the <code>ios_config</code> module, which manages Cisco IOS configuration sections.<a data-type="indexterm" data-primary="ios_config module"/></p>
+
+<p>Let&#8217;s create the first task, <code>ios_config</code>, in our playbook, as shown in <a data-type="xref" href="#network_playbook_hostname"/>.<a data-type="indexterm" data-primary="playbooks" data-secondary="for network devices" data-tertiary="setting hostname on Cisco Catalyst"/></p>
+<div id="network_playbook_hostname" data-type="example">
+<h5>Set the hostname on Cisco Catalyst</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: localhost
+  gather_facts: no
+  connection: local <a class="co" id="co_ansible_for_network_devices_CO1-1" href="#callout_ansible_for_network_devices_CO1-1"><img src="callouts/1.png" alt="1"/></a>
+  tasks:
+  - name: set a hostname
+    ios_config:
+      lines: hostname sw1
+      provider:
+        host: 10.0.0.10 <a class="co" id="co_ansible_for_network_devices_CO1-2" href="#callout_ansible_for_network_devices_CO1-2"><img src="callouts/2.png" alt="2"/></a>
+        username: admin <a class="co" id="co_ansible_for_network_devices_CO1-3" href="#callout_ansible_for_network_devices_CO1-3"><img src="callouts/3.png" alt="3"/></a>
+        password: s3cr3t <a class="co" id="co_ansible_for_network_devices_CO1-4" href="#callout_ansible_for_network_devices_CO1-4"><img src="callouts/4.png" alt="4"/></a>
+        authorize: true <a class="co" id="co_ansible_for_network_devices_CO1-5" href="#callout_ansible_for_network_devices_CO1-5"><img src="callouts/5.png" alt="5"/></a>
+        auth_pass: 3n4bl3s3cr3t <a class="co" id="co_ansible_for_network_devices_CO1-6" href="#callout_ansible_for_network_devices_CO1-6"><img src="callouts/6.png" alt="6"/></a></pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO1-1" href="#co_ansible_for_network_devices_CO1-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Set the connection to <code>local</code>, so every task is handled by Ansible, just like a local action.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO1-2" href="#co_ansible_for_network_devices_CO1-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>The domain name or IP address that our network device is reachable at</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO1-3" href="#co_ansible_for_network_devices_CO1-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>The username to log in by SSH into the device</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO1-4" href="#co_ansible_for_network_devices_CO1-4"><img src="callouts/4.png" alt="4"/></a></dt>
+<dd><p>Password user for login into the device</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO1-5" href="#co_ansible_for_network_devices_CO1-5"><img src="callouts/5.png" alt="5"/></a></dt>
+<dd><p>With <code>authorize</code>, we tell the module to execute the command in privilege mode.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO1-6" href="#co_ansible_for_network_devices_CO1-6"><img src="callouts/6.png" alt="6"/></a></dt>
+<dd><p>And also pass the module the password to get into privilege mode</p></dd>
+</dl>
+<div data-type="note">
+<p>Instead of passing the module arguments <code>username</code>, <code>password</code>, <code>authorize</code>, and <code>auth_pass</code> with each task, the following environment variables can be defined and will be used as a replacement: <code>ANSIBLE_NET_USERNAME</code>, <code>ANSIBLE_NET_PASSWORD</code>, <code>ANSIBLE_NET_&#x200b;AUTHORIZE</code>, and <code>ANSIBLE_NET_AUTH_PASS</code>.</p>
+
+<p>These can help to reduce the boilerplate on each task. Keep in mind that these environment variables will be read for several network modules. However, each variable can always be overwritten by explicitly passing the module arguments, just as we did.</p>
+</div>
+
+<p>Is this it? Indeed, it is. Let&#8217;s run this playbook:</p>
+
+<pre data-type="programlisting">$ ansible-playbook playbook.yml -v
+No config file found; using defaults
+[WARNING]: Host file not found: /etc/ansible/hosts
+
+[WARNING]: provided hosts list is empty, only localhost is available
+
+PLAY [localhost] **************************************************************
+
+TASK [set a hostname] *********************************************************
+changed: [localhost] =&gt; {"changed": true, "updates": ["hostname sw1"],
+"warnings": []}
+
+PLAY RECAP ********************************************************************
+localhost                  : ok=1    changed=1    unreachable=0    failed=0</pre>
+
+<p>Looks like it worked, but to verify, we log in to the device and double-check:</p>
+
+<pre data-type="programlisting">$ ssh admin@10.0.0.10
+Password:
+
+sw1&gt;</pre>
+
+<p>Well, that did indeed work! We successfully executed our first playbook for our Cisco Catalyst.</p>
+<div data-type="note">
+<p>Network modules are written to support idempotency.<a data-type="indexterm" data-primary="idempotence" data-secondary="network modules&#x27; support for"/> We can execute our playbook as many times as we want without changing and breaking anything!<a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="playbook setting hostname on Cisco Catalyst" data-startref="ix_netdevplay"/></p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Inventory and Variables for Network Modules</h1>
+
+<p>You may notice that the host target in our last playbook was defined as <code>localhost</code>.<a data-type="indexterm" id="ix_varnet" data-primary="variables" data-secondary="for network modules"/><a data-type="indexterm" id="ix_invnet" data-primary="inventory" data-secondary="for network modules"/><a data-type="indexterm" id="ix_netdevinvvar" data-primary="network devices, Ansible for" data-secondary="inventory and variables for network modules"/> If we own a farm of Cisco Catalyst switches, creating a playbook for each with target <code>localhost</code> would not scale well and wouldn&#8217;t be flexible enough, since we probably need different configurations and as a result different Ansible variables for each network device.<a data-type="indexterm" data-primary="inventory" data-secondary="for network modules" data-tertiary="hosts file for Cisco Catalyst switches"/></p>
+
+<p>Let&#8217;s go ahead the way we are familiar with and put the network devices into a static inventory file in <a data-type="xref" href="#network_hosts_a"/> and save it as <em>./network_hosts</em>.</p>
+<div id="network_hosts_a" data-type="example">
+<h5>Hosts file containing our switches</h5>
+
+<pre data-type="programlisting">[ios_switches]
+sw1.example.com</pre></div>
+
+<p>We are now able to change the playbook target to <code>ios_switches</code> just<a data-type="indexterm" data-primary="playbooks" data-secondary="for network devices" data-tertiary="setting hostname on Cisco Catalyst"/> the way we do in <a data-type="xref" href="#network_playbook_hostname_target_a"/>.</p>
+<div id="network_playbook_hostname_target_a" data-type="example">
+<h5>Set the hostname on Cisco Catalyst</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches <a class="co" id="co_ansible_for_network_devices_CO2-1" href="#callout_ansible_for_network_devices_CO2-1"><img src="callouts/1.png" alt="1"/></a>
+  gather_facts: no
+  connection: local
+  tasks:
+  - name: set a hostname
+    ios_config:
+      lines: hostname sw1
+      provider:
+        host: 10.0.0.10
+        username: admin
+        password: s3cr3t
+        authorize: true
+        auth_pass: 3n4bl3s3cr3t</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO2-1" href="#co_ansible_for_network_devices_CO2-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Use <code>ios_switches</code> as target</p></dd>
+</dl>
+
+<p>Further, since we now have an inventory, we are able to use some internal Ansible variables.<a data-type="indexterm" data-primary="variables" data-secondary="for network modules" data-tertiary="inventory_hostname_short"/> The variable <code>inventory_hostname_short</code> contains the host-part inventory item (e.g., <em>sw1</em> in <em>sw1.example.com</em>). As a result, we are able to simplify our playbook as in <a data-type="xref" href="#network_playbook_hostname_target_b"/>.</p>
+<div id="network_playbook_hostname_target_b" data-type="example">
+<h5>Use <em>inventory_hostname_short</em> for configuration</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches
+  gather_facts: no
+  connection: local
+  tasks:
+  - name: set a hostname
+    ios_config:
+      lines: hostname {{ inventory_hostname_short }} <a class="co" id="co_ansible_for_network_devices_CO3-1" href="#callout_ansible_for_network_devices_CO3-1"><img src="callouts/1.png" alt="1"/></a>
+      provider:
+        host: 10.0.0.10
+        username: admin
+        password: s3cr3t
+        authorize: true
+        auth_pass: 3n4bl3s3cr3t</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO3-1" href="#co_ansible_for_network_devices_CO3-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>We make use of <code>inventory_hostname_short</code>.</p></dd>
+</dl>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Local Connection</h2>
+
+<p>It is a general pattern for network devices that playbooks always need to be executed with a local connection.<a data-type="indexterm" data-primary="variables" data-secondary="for network modules" data-tertiary="group variable file for ios_switches"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="inventory and variables for network modules" data-tertiary="local connections"/></p>
+
+<p>We take this setting away from the playbook and put it in a <em>group_vars/ios_switches</em> file as shown in <a data-type="xref" href="#network_group_vars_file_a"/>.</p>
+<div id="network_group_vars_file_a" data-type="example">
+<h5>Group variable file for ios_switches</h5>
+
+<pre data-type="programlisting">---
+ansible_connection: local</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Host Connection</h2>
+
+<p>When we look again at our playbook <a data-type="xref" href="#network_playbook_hostname_target_b"/>, we should also <a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="inventory and variables for network modules" data-tertiary="host connection"/>remove the configuration parameters of <code>ios_config</code>, which are likely different on each network device (e.g., the connection address <code>host</code>).</p>
+
+<p>Much as we did for the <em>hostname</em>, we use an internal variable; this time it&#8217;s <code>inventory_hostname</code>.<a data-type="indexterm" data-primary="inventory" data-secondary="for network modules" data-tertiary="inventory_hostname"/> In our case, <code>inventory_hostname</code> corresponds to the fully qualified domain name (FQDN) <em>sw1.example.com</em>. When this domain is resolvable by our name servers, this would be all we need.
+However, while we are still developing our setup, this might not be the case.</p>
+
+<p>To not rely on the DNS entry, we make it a bit more flexible and create a variable <code>net_host</code> that is used for the connection.<a data-type="indexterm" data-primary="variables" data-secondary="for network modules" data-tertiary="net_host"/> As a fallback, <code>inventory_hostname</code> should be used in case <code>net_host</code> is not defined.</p>
+
+<p>This may sound a bit complicated, but the implementation is pretty simple. Have a look at <a data-type="xref" href="#network_playbook_net_host"/>.</p>
+<div id="network_playbook_net_host" data-type="example">
+<h5>Use variable for the connection</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches
+  gather_facts: no
+  tasks:
+  - name: set a hostname
+    ios_config:
+      lines: hostname {{ inventory_hostname_short }}
+      provider:
+        host: "{{ net_host | default(inventory_hostname) }}" <a class="co" id="co_ansible_for_network_devices_CO4-1" href="#callout_ansible_for_network_devices_CO4-1"><img src="callouts/1.png" alt="1"/></a>
+        username: admin
+        password: s3cr3t
+        authorize: true
+        auth_pass: 3n4bl3s3cr3t</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO4-1" href="#co_ansible_for_network_devices_CO4-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Use <code>net_host</code> variable and fall back to <code>inventory_hostname</code> variable for the <span class="keep-together">connection</span>.</p></dd>
+</dl>
+
+<p>Usually, it is a good practice to put host variables into <code>hosts_vars</code>.</p>
+
+<p>Because <a data-type="indexterm" data-primary="inventory" data-secondary="for network modules" data-tertiary="host connection"/>this setting is somewhat related to connection, it is probably appropriate to put it into the inventory file <em>./network_hosts</em> as an inventory variable, just like <a data-type="xref" href="#network_hosts_b"/>.</p>
+<div id="network_hosts_b" data-type="example">
+<h5>Add net_host to corresponding hosts entry</h5>
+
+<pre data-type="programlisting">[ios_switches]
+sw1.example.com  net_host=10.0.0.10</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Authentication Variables</h2>
+
+<p>As a final step, we use variables for all authentication-related configurations. This provides the most flexibility.<a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="inventory and variables for network modules" data-tertiary="authentication variables"/><a data-type="indexterm" data-primary="variables" data-secondary="for network modules" data-tertiary="authentication variables"/><a data-type="indexterm" data-primary="authentication" data-secondary="authentication variables for network modules"/></p>
+
+<p>The authentication configurations can be placed in <code>group_vars</code> in case all network devices in that group share the same configuration,<a data-type="indexterm" data-primary="groups" data-secondary="group variable file for iOS switches"/> and this is what we are going to do in <a data-type="xref" href="#network_group_vars_file_b"/>.</p>
+<div id="network_group_vars_file_b" data-type="example">
+<h5>Group variable file for ios_switches</h5>
+
+<pre data-type="programlisting">---
+ansible_connection: local
+net_username: admin
+net_password: s3cr3t
+net_authorize: true
+net_auth_pass: 3n4bl3s3cr3t</pre></div>
+
+<p>Even when a few network devices have a different authentication configuration, these can be overwritten on the <code>hosts_vars</code> level.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Save the Config</h2>
+
+<p>It is time to save the configuration and make sure it will be used next time the device is rebooted.<a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="inventory and variables for network modules" data-tertiary="saving the config"/> Luckily, the only thing to be added to our <code>ios_config</code> task is the parameter <code>save</code> with the value <code>true</code>.<a data-type="indexterm" data-primary="save parameter"/></p>
+
+<p>For those of us who like to store backups, Ansible handles that as well. The Boolean parameter <code>backup</code> indicates that the running config should be backed up before applying any changes.<a data-type="indexterm" data-primary="backup parameter"/></p>
+
+<p>The backup will be downloaded into a file to the local directory <em>backup</em> beside your playbooks on the control host, where we run Ansible from. In case the directory <em>backup</em> has not yet been created, Ansible will create it for us:</p>
+
+<pre data-type="programlisting">$ ls backup/
+switch1_config.2017-02-19@17:14:00</pre>
+<div data-type="note">
+<p>The backup will contain the running config, not the startup config.</p>
+</div>
+
+<p>Our version of our playbook has<a data-type="indexterm" data-primary="playbooks" data-secondary="for network devices" data-tertiary="final version, setting hostname for Cisco Catalyst switch"/> now changed to <a data-type="xref" href="#network_playbook_hostname_hosts"/>.</p>
+<div id="network_playbook_hostname_hosts" data-type="example">
+<h5>Final version of playbook, set hostname on Catalyst</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches
+  gather_facts: no
+  tasks:
+  - name: set a hostname
+    ios_config:
+      lines: hostname {{ inventory_hostname_short }}
+      provider:
+        host: "{{ net_host | default(inventory_hostname) }}"
+        username: "{{ net_username | default(omit) }}" <a class="co" id="co_ansible_for_network_devices_CO5-1" href="#callout_ansible_for_network_devices_CO5-1"><img src="callouts/1.png" alt="1"/></a>
+        password: "{{ net_password | default(omit) }}" <a class="co" id="co_ansible_for_network_devices_CO5-2" href="#callout_ansible_for_network_devices_CO5-1"><img src="callouts/1.png" alt="1"/></a>
+        authorize: "{{ net_authorize | default(omit) }}" <a class="co" id="co_ansible_for_network_devices_CO5-3" href="#callout_ansible_for_network_devices_CO5-1"><img src="callouts/1.png" alt="1"/></a>
+        auth_pass: "{{ net_auth_pass | default(omit) }}" <a class="co" id="co_ansible_for_network_devices_CO5-4" href="#callout_ansible_for_network_devices_CO5-1"><img src="callouts/1.png" alt="1"/></a>
+      backup: true <a class="co" id="co_ansible_for_network_devices_CO5-5" href="#callout_ansible_for_network_devices_CO5-2"><img src="callouts/2.png" alt="2"/></a>
+      save: true <a class="co" id="co_ansible_for_network_devices_CO5-6" href="#callout_ansible_for_network_devices_CO5-3"><img src="callouts/3.png" alt="3"/></a></pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO5-1" href="#co_ansible_for_network_devices_CO5-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>All these variables can be set on <code>group_vars</code> or <code>host_vars</code> level.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO5-2" href="#co_ansible_for_network_devices_CO5-5"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Back up the running config into <em>./backup</em>.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO5-3" href="#co_ansible_for_network_devices_CO5-6"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>Saves <code>running-config</code> to <code>startup-config</code> on the device.</p></dd>
+</dl>
+<div data-type="note">
+<p>The parameters <code>backup</code> and <code>save</code> are handled like actions.<a data-type="indexterm" data-primary="backup parameter"/><a data-type="indexterm" data-primary="save parameter"/> These actions get executed even if no changes have been applied. I also noticed that the backup action does not report <code>changed=True</code> and that existing backups are automatically deleted before creating new ones.<a data-type="indexterm" data-primary="variables" data-secondary="for network modules" data-startref="ix_varnet"/><a data-type="indexterm" data-primary="inventory" data-secondary="for network modules" data-startref="ix_invnet"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="inventory and variables for network modules" data-startref="ix_netdevinvvar"/></p>
+</div>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Use Configs from a File</h1>
+
+<p>Working with the <code>lines</code> parameter is great for a few config tweaks. However, the way I am used to managing devices is to have a full copy of the config saved locally as a file.<a data-type="indexterm" id="ix_iOSconfig" data-primary="iOS, Cisco Catalyst switch running" data-secondary="configs from a file"/><a data-type="indexterm" id="ix_netdevconf" data-primary="network devices, Ansible for" data-secondary="using configs from a file"/> I make my modifications in the file, and copy it back into the device.</p>
+
+<p>Fortunately, <code>ios_config</code> has another parameter for config files to the device: the <code>src</code> parameter.<a data-type="indexterm" data-primary="src parameter"/> This parameter allows us to have large static configuration parts as the file <em>ios_init_template.conf</em>, as we see in <a data-type="xref" href="#ios_config_file"/>.</p>
+<div id="ios_config_file" data-type="example">
+<h5>Example of a static IOS config as file</h5>
+
+<pre data-type="programlisting">no service pad
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+boot-start-marker
+boot-end-marker
+aaa new-model
+!
+clock timezone CET 1 0
+clock summer-time CEST recurring last Sun Mar 2:00 last Sun Oct 3:00
+!
+system mtu routing 1500
+!
+vtp mode transparent
+!
+ip dhcp snooping vlan 10-20
+ip dhcp snooping
+no ip domain-lookup
+!
+!
+spanning-tree mode rapid-pvst
+spanning-tree extend system-id
+!
+vlan internal allocation policy ascending
+!
+interface Vlan1
+ no ip address
+ no ip route-cache
+ shutdown
+!
+ip default-gateway 10.0.0.1
+no ip http server
+no ip http secure-server
+!
+snmp-server community private
+snmp-server community public RO
+snmp-server location earth
+snmp-server contact admin@example.com
+!
+ntp server 10.123.0.5
+ntp server 10.100.222.12
+!</pre></div>
+
+<p>No worries—I won&#8217;t go through all these configurations. Instead, let&#8217;s come back to our playbook of the previous section and extend it as in <a data-type="xref" href="#network_playbook_ios_config_src_a"/>, including adding the task for using our static config from a file.</p>
+
+<p>We now have two tasks configuring our network device.<a data-type="indexterm" data-primary="backup parameter" data-secondary="causing too many intermediate backups"/> Using <code>backup</code> at each task would cause the device to make too many intermediate backups. We want only one backup of the running config, the one before any modification.</p>
+
+<p>That is why we created an additional task just for the backup task at the beginning of the playbook. For the same reason, we added a handler for the <code>save</code> to run it only once and when something has changed.</p>
+<div id="network_playbook_ios_config_src_a" data-type="example">
+<h5>Use src with a static config file</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches
+  gather_facts: no
+  tasks:
+  - name: backup the running config
+    ios_config:
+      backup: true
+      provider:
+        host: "{{ net_host | default(inventory_hostname) }}"
+        username: "{{ net_username | default(omit) }}"
+        password: "{{ net_password | default(omit) }}"
+        authorize: "{{ net_authorize | default(omit) }}"
+        auth_pass: "{{ net_auth_pass | default(omit) }}"
+
+  - name: init the static config
+    ios_config:
+      src: files/ios_init_config.conf <a class="co" id="co_ansible_for_network_devices_CO6-1" href="#callout_ansible_for_network_devices_CO6-1"><img src="callouts/1.png" alt="1"/></a>
+      provider:
+        host: "{{ net_host | default(inventory_hostname) }}"
+        username: "{{ net_username | default(omit) }}"
+        password: "{{ net_password | default(omit) }}"
+        authorize: "{{ net_authorize | default(omit) }}"
+        auth_pass: "{{ net_auth_pass | default(omit) }}"
+    notify: save the running config <a class="co" id="co_ansible_for_network_devices_CO6-2" href="#callout_ansible_for_network_devices_CO6-2"><img src="callouts/2.png" alt="2"/></a>
+
+  - name: set a hostname
+    ios_config:
+      lines: hostname {{ inventory_hostname_short }}
+      provider:
+        host: "{{ net_host | default(inventory_hostname) }}"
+        username: "{{ net_username | default(omit) }}"
+        password: "{{ net_password | default(omit) }}"
+        authorize: "{{ net_authorize | default(omit) }}"
+        auth_pass: "{{ net_auth_pass | default(omit) }}"
+    notify: save the running config <a class="co" id="co_ansible_for_network_devices_CO6-3" href="#callout_ansible_for_network_devices_CO6-2"><img src="callouts/2.png" alt="2"/></a>
+
+  handlers:
+  - name: save the running config
+    ios_config:
+      save: true
+      provider:
+        host: "{{ net_host | default(inventory_hostname) }}"
+        username: "{{ net_username | default(omit) }}"
+        password: "{{ net_password | default(omit) }}"
+        authorize: "{{ net_authorize | default(omit) }}"
+        auth_pass: "{{ net_auth_pass | default(omit) }}"</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO6-1" href="#co_ansible_for_network_devices_CO6-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Read an IOS config from a file located in <em>files/ios_init_config.conf</em>.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO6-2" href="#co_ansible_for_network_devices_CO6-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Notify a handler to save the config.</p></dd>
+</dl>
+
+<p>At this point, we are already able to mix static and dynamic configs. Of course, we can extend the playbook for additional dynamic configs in the same way. However, we can even get even more advanced.</p>
+
+<p>But before that, you may have noticed that there are a few large blocks of duplicate configs for the provider information.<a data-type="indexterm" data-primary="src parameter" data-secondary="using with static config file"/> We should optimize that a bit, as shown in <a data-type="xref" href="#network_playbook_ios_config_src_b"/>.</p>
+<div id="network_playbook_ios_config_src_b" data-type="example">
+<h5>Use src with a static config file</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches
+  gather_facts: no
+  vars:
+    provider: <a class="co" id="co_ansible_for_network_devices_CO7-1" href="#callout_ansible_for_network_devices_CO7-1"><img src="callouts/1.png" alt="1"/></a>
+      host: "{{ net_host | default(inventory_hostname) }}"
+      username: "{{ net_username | default(omit) }}"
+      password: "{{ net_password | default(omit) }}"
+      authorize: "{{ net_authorize | default(omit) }}"
+      auth_pass: "{{ net_auth_pass | default(omit) }}"
+  tasks:
+  - name: init the static config with backup before
+    ios_config:
+      backup: true <a class="co" id="co_ansible_for_network_devices_CO7-2" href="#callout_ansible_for_network_devices_CO7-2"><img src="callouts/2.png" alt="2"/></a>
+      src: files/ios_init_config.conf
+      provider: "{{ provider }}" <a class="co" id="co_ansible_for_network_devices_CO7-3" href="#callout_ansible_for_network_devices_CO7-3"><img src="callouts/3.png" alt="3"/></a>
+    notify: save the running config
+
+  - name: set a hostname
+    ios_config:
+      lines: hostname {{ inventory_hostname_short }}
+      provider: "{{ provider }}" <a class="co" id="co_ansible_for_network_devices_CO7-4" href="#callout_ansible_for_network_devices_CO7-3"><img src="callouts/3.png" alt="3"/></a>
+    notify: save the running config
+
+  handlers:
+  - name: save the running config
+    ios_config:
+      save: true
+      provider: "{{ provider }}" <a class="co" id="co_ansible_for_network_devices_CO7-5" href="#callout_ansible_for_network_devices_CO7-3"><img src="callouts/3.png" alt="3"/></a></pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO7-1" href="#co_ansible_for_network_devices_CO7-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Use a <code>vars</code> clause with variable <code>provider</code> for the configuration in common.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO7-2" href="#co_ansible_for_network_devices_CO7-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Because we have only one single task touching the config, we move the backup parameter to this task.</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO7-3" href="#co_ansible_for_network_devices_CO7-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>Reuse the <code>provider</code> variable where needed.</p></dd>
+</dl>
+<div data-type="tip">
+<p>We can use <code>ios_config</code> with nothing other than the <code>backup</code> parameter to get a config template to start with.<a data-type="indexterm" data-primary="backup parameter" data-secondary="getting config template to start with"/></p>
+</div>
+
+<p>OK, that looks good for the moment.<a data-type="indexterm" data-primary="iOS, Cisco Catalyst switch running" data-secondary="configs from a file" data-startref="ix_iOSconfig"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="using configs from a file" data-startref="ix_netdevconf"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Templates, Templates, Templates</h1>
+
+<p>We have seen that the <code>src</code> parameter in <code>ios_config</code> can be used for static configs. <a data-type="indexterm" id="ix_netdevtempl" data-primary="network devices, Ansible for" data-secondary="templates"/><a data-type="indexterm" data-primary="src parameter" data-secondary="using for static config files and templates"/><a data-type="indexterm" id="ix_Jinjaios" data-primary="Jinja2 template engine" data-secondary="templates for iOS device configuration"/><a data-type="indexterm" id="ix_iosconftmpl" data-primary="ios_config module" data-secondary="template support"/>But what about Jinja2 templates? Fortunately, <code>ios_config</code> has template support built in, as shown in <a data-type="xref" href="#network_playbook_ios_config_src_c"/>.</p>
+<div id="network_playbook_ios_config_src_c" data-type="example">
+<h5>Use src for static config files and templates</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: ios_switches
+  gather_facts: no
+  vars:
+    provider:
+      host: "{{ net_host | default(inventory_hostname) }}"
+      username: "{{ net_username | default(omit) }}"
+      password: "{{ net_password | default(omit) }}"
+      authorize: "{{ net_authorize | default(omit) }}"
+      auth_pass: "{{ net_auth_pass | default(omit) }}"
+  tasks:
+  - name: copy the static config
+    ios_config:
+      backup: true
+      src: files/ios_init_config.conf.j2 <a class="co" id="co_ansible_for_network_devices_CO8-1" href="#callout_ansible_for_network_devices_CO8-1"><img src="callouts/1.png" alt="1"/></a>
+      provider: "{{ provider }}"
+    notify: save the running config
+
+  handlers:
+  - name: save the running config
+    ios_config:
+      save: true
+      provider: "{{ provider }}"</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO8-1" href="#co_ansible_for_network_devices_CO8-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>We created a template from the previous static config file and saved it as <em>files/ios_init_config.conf.j2</em> by convention.</p></dd>
+</dl>
+
+<p>We have turned our playbook into an adaptive Ansible IOS network device configuration playbook. All network device configurations, static and dynamic ones, can be handled within the template, as in <a data-type="xref" href="#ios_config_template"/>.</p>
+<div id="ios_config_template" data-type="example">
+<h5>IOS config template, including dynamic configs for VLANs and interfaces</h5>
+
+<pre data-type="programlisting" data-code-language="jinja">hostname {{ inventory_hostname_short }}
+
+no service pad
+
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+
+boot-start-marker
+boot-end-marker
+
+clock timezone CET 1 0
+clock summer-time CEST recurring last Sun Mar 2:00 last Sun Oct 3:00
+
+ip dhcp snooping
+no ip domain-lookup
+
+spanning-tree mode rapid-pvst
+spanning-tree extend system-id
+
+vlan internal allocation policy ascending
+
+!
+{% if vlans is defined %} <a class="co" id="co_ansible_for_network_devices_CO9-1" href="#callout_ansible_for_network_devices_CO9-1"><img src="callouts/1.png" alt="1"/></a>
+{% for vlan in vlans %}
+vlan {{ vlan.id }}
+ name {{ vlan.name }}
+!
+{% endfor %}
+{% endif %}
+
+{% if ifaces is defined %} <a class="co" id="co_ansible_for_network_devices_CO9-2" href="#callout_ansible_for_network_devices_CO9-1"><img src="callouts/1.png" alt="1"/></a>
+{% for iface in ifaces %}
+interface {{ iface.name}}
+ description {{ iface.descr }}
+{% if iface.vlans is defined %}
+{% endif %}
+ switchport access vlan {{ iface.vlans | join(',') }}
+ spanning-tree portfast
+!
+{% endfor %}
+{% endif %}
+
+no ip http server
+no ip http secure-server
+
+snmp-server community public RO
+snmp-server location earth
+snmp-server contact admin@example.com
+! add more configs here...</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO9-1" href="#co_ansible_for_network_devices_CO9-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Example of how to use a dynamic config within the template file</p></dd>
+</dl>
+
+<p>Since this is just a template, all aspects of the Jinja2 template engine can be used, including template inheritance and macros. At the time of writing, <code>--diff</code> does not return a diff output.</p>
+
+<p>Let&#8217;s run the playbook:</p>
+
+<pre data-type="programlisting">$ ansible-playbook playbook.yml -i network_hosts
+
+PLAY [ios_switches] ************************************************************
+
+TASK [copy the static config] **************************************************
+changed: [switch1]
+
+RUNNING HANDLER [save the running config] **************************************
+changed: [switch1]
+
+PLAY RECAP *********************************************************************
+switch1                    : ok=2    changed=2    unreachable=0    failed=0</pre>
+
+<p>That was easy, wasn&#8217;t it?<a data-type="indexterm" data-primary="ios_config module" data-secondary="template support" data-startref="ix_iosconftmpl"/><a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="templates for iOS device configuration" data-startref="ix_Jinjaios"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="templates" data-startref="ix_netdevtempl"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Gathering Facts</h1>
+
+<p>Collecting facts for network modules is implemented by use of a separate facts module—in our case, <code>ios_facts</code>.<a data-type="indexterm" data-primary="ios_facts module"/><a data-type="indexterm" data-primary="network devices, Ansible for" data-secondary="gathering facts"/><a data-type="indexterm" data-primary="facts" data-secondary="gathering for network modules"/></p>
+<div data-type="note">
+<p>Use <code>gather_facts: false</code> in your play for network device <span class="keep-together">playbooks</span>.</p>
+</div>
+
+<p>Since we have already prepared all connection configurations in the previous section, we are ready to jump into the playbook in <a data-type="xref" href="#network_facts"/>.</p>
+
+<p>The <code>ios_facts</code> module has<a data-type="indexterm" data-primary="gather_subset parameter"/> only one optional parameter: <code>gather_subset</code>. This parameter is used to limit wanted or filter unwanted facts by adding an explanation point (<code>!</code>). The default is <code>!config</code>, which corresponds to <em>all but config</em>.</p>
+<div id="network_facts" data-type="example">
+<h5>Collecting facts of an IOS device</h5>
+
+<pre data-type="programlisting" data-code-language="yaml">---
+- hosts: ios_switches
+  gather_facts: no
+  tasks:
+  - name: gathering IOS facts
+    ios_facts:
+      gather_subset: hardware <a class="co" id="co_ansible_for_network_devices_CO10-1" href="#callout_ansible_for_network_devices_CO10-1"><img src="callouts/1.png" alt="1"/></a>
+      host: "{{ net_host | default(inventory_hostname) }}"
+      provider:
+        username: "{{ net_username | default(omit) }}"
+        password: "{{ net_password | default(omit) }}"&gt;
+        authorize: "{{ net_authorize | default(omit) }}"
+        auth_pass: "{{ net_auth_pass | default(omit) }}"
+  - name: print out the IOS version
+    debug:
+      var: ansible_net_version <a class="co" id="co_ansible_for_network_devices_CO10-2" href="#callout_ansible_for_network_devices_CO10-2"><img src="callouts/2.png" alt="2"/></a></pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_for_network_devices_CO10-1" href="#co_ansible_for_network_devices_CO10-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Selecting hardware facts only</p></dd>
+<dt><a class="co" id="callout_ansible_for_network_devices_CO10-2" href="#co_ansible_for_network_devices_CO10-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>All network facts start with the prefix <code>ansible_net_</code></p></dd>
+</dl>
+<div data-type="note">
+<p>Facts are injected to the Ansible host variables and do not need to be registered (e.g., <code>register: result</code>) on the task level.</p>
+</div>
+
+<p>Let&#8217;s run the playbook:</p>
+
+<pre data-type="programlisting">$ ansible-playbook facts.yml -i network_hosts -v
+No config file found; using defaults
+
+PLAY [ios_switches] ************************************************************
+
+TASK [get some facts] **********************************************************
+ok: [switch1] =&gt; {"ansible_facts": {"ansible_net_filesystems": ["flash:"], "ansi
+ble_net_gather_subset": ["hardware", "default"], "ansible_net_hostname": "sw1",
+"ansible_net_image": "flash:c2960-lanbasek9-mz.150-1.SE/c2960-lanbasek9-mz.150-1
+.SE.bin", "ansible_net_memfree_mb": 17292, "ansible_net_memtotal_mb": 20841,
+"ansible_net_model": null, "ansible_net_serialnum": "FOC1132Z0ZA", "ansible_net_
+version": "15.0(1)SE"}, "changed": false, "failed_commands": []}
+
+TASK [print out the IOS version] ***********************************************
+ok: [switch1] =&gt; {
+   "ansible_net_version": "15.0(1)SE"
+}
+
+PLAY RECAP *********************************************************************
+switch1                    : ok=2    changed=0    unreachable=0    failed=0</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Conclusion</h1>
+
+<p>Now you have a first impression about how to orchestrate and configure network devices and get facts with Ansible. The <code>ios_config</code>, as well as the <code>ios_facts</code> module, are common modules that exist with an identical feature set for different network operation systems, (e.g., for Dell EMC Networking OS10—<code>dellos1o_config</code>, or Arista EOS—<code>eos_config</code>).</p>
+
+<p>But depending on the operation system and the interface the network device provides, the amount and variety of the modules may differ quite a bit. I encourage you to keep an eye on the <a href="http://bit.ly/2uvBe2f">docs</a> to find out more about other <span class="keep-together">modules</span>.<a data-type="indexterm" data-primary="network devices, Ansible for" data-startref="ix_netdev"/></p>
+</section>
+
+
+
+
+
+
+
+</section>

@@ -1,0 +1,320 @@
+<section data-type="chapter" id="introducing_mezzanine">
+<h1>Introducing Mezzanine: <span class="keep-together">Our Test Application</span></h1>
+
+
+<p><a data-type="xref" href="#playbooks_a_beginning"/> covered the basics of writing playbooks. But
+real life is always messier than introductory chapters of programming books, so in this chapter
+we&#8217;re going to work through a complete example of deploying a nontrivial
+application.<a data-type="indexterm" data-primary="Mezzanine"/></p>
+
+<p>Our example application is an open source content management system (CMS) called <a href="http://mezzanine.jupo.org">Mezzanine</a>, which is similar in spirit to
+WordPress. Mezzanine is built on top of Django, the free Python-based framework for writing web applications.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Why Deploying to Production Is Complicated</h1>
+
+<p>Let&#8217;s take a little detour and talk about the differences between
+running software in development mode on your laptop versus running the software
+in production.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="running in development mode"/> Mezzanine is a great example of an application that is much easier to run in
+development mode than it is to deploy. <a data-type="xref" href="#mezzanine_dev_mode"/> shows all you need
+to do to get Mezzanine running on your laptop.<span data-type="footnote">This installs the Python packages into a virtualenv. We cover virtualenvs in <a data-type="xref" href="#installing_mezzanine_virtualenv"/>.</span></p>
+<div id="mezzanine_dev_mode" data-type="example">
+<h5>Running Mezzanine in development mode</h5>
+
+<pre data-type="programlisting" data-code-language="console">$ virtualenv venv
+$ source venv/bin/activate
+$ pip install mezzanine
+$ mezzanine-project myproject
+$ cd myproject
+$ sed -i.bak 's/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ["127.0.0.1"]/' myproject\
+/settings.py
+$ python manage.py createdb
+$ python manage.py runserver</pre></div>
+
+<p>You&#8217;ll be prompted to answer several questions. I answered "yes" to each yes/no
+question, and accepted the default answer whenever one was available. This was
+what my interaction looked like:</p>
+
+<pre data-type="programlisting">Operations to perform:
+  Apply all migrations: admin, auth, blog, conf, contenttypes, core,
+  django_comments, forms, galleries, generic, pages, redirects, sessions, sites,
+  twitter
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying sites.0001_initial... OK
+  Applying blog.0001_initial... OK
+  Applying blog.0002_auto_20150527_1555... OK
+  Applying conf.0001_initial... OK
+  Applying core.0001_initial... OK
+  Applying core.0002_auto_20150414_2140... OK
+  Applying django_comments.0001_initial... OK
+  Applying django_comments.0002_update_user_email_field_length... OK
+  Applying django_comments.0003_add_submit_date_index... OK
+  Applying pages.0001_initial... OK
+  Applying forms.0001_initial... OK
+  Applying forms.0002_auto_20141227_0224... OK
+  Applying forms.0003_emailfield... OK
+  Applying forms.0004_auto_20150517_0510... OK
+  Applying forms.0005_auto_20151026_1600... OK
+  Applying galleries.0001_initial... OK
+  Applying galleries.0002_auto_20141227_0224... OK
+  Applying generic.0001_initial... OK
+  Applying generic.0002_auto_20141227_0224... OK
+  Applying pages.0002_auto_20141227_0224... OK
+  Applying pages.0003_auto_20150527_1555... OK
+  Applying redirects.0001_initial... OK
+  Applying sessions.0001_initial... OK
+  Applying sites.0002_alter_domain_unique... OK
+  Applying twitter.0001_initial... OK
+
+A site record is required.
+Please enter the domain and optional port in the format 'domain:port'.
+For example 'localhost:8000' or 'www.example.com'.
+Hit enter to use the default (127.0.0.1:8000):
+
+Creating default site record: 127.0.0.1:8000 ...
+
+
+Creating default account ...
+
+Username (leave blank to use 'lorin'):
+Email address: lorin@ansiblebook.com
+Password:
+Password (again):
+Superuser created successfully.
+Installed 2 object(s) from 1 fixture(s)
+
+Would you like to install some initial demo pages?
+Eg: About us, Contact form, Gallery. (yes/no): yes</pre>
+
+<p>You should eventually see output on the terminal that looks like this:</p>
+
+<pre data-type="programlisting">              .....
+          _d^^^^^^^^^b_
+       .d''           ``b.
+     .p'                `q.
+    .d'                   `b.
+   .d'                     `b.   * Mezzanine 4.2.2
+   ::                       ::   * Django 1.10.2
+  ::    M E Z Z A N I N E    ::  * Python 3.5.2
+   ::                       ::   * SQLite 3.14.1
+   `p.                     .q'   * Darwin 16.0.0
+    `p.                   .q'
+     `b.                 .d'
+       `q..          ..p'
+          ^q........p^
+              ''''
+
+Performing system checks...
+
+System check identified no issues (0 silenced).
+October 04, 2016 - 04:57:44
+Django version 1.10.2, using settings 'myproject.settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.</pre>
+
+<p>If you point your browser to <a href="http://127.0.0.1:8000/"><em class="hyperlink">http://127.0.0.1:8000/</em></a>, you should see
+a web page that looks like <a data-type="xref" href="#mezzanine_figure"/>.</p>
+
+<figure id="mezzanine_figure">
+<img src="images/aur2_0501.png" alt="Mezzanine screenshot"/>
+<figcaption>Mezzanine after a fresh install</figcaption>
+</figure>
+
+<p>Deploying this application to
+production is another matter. When you run the <code>mezzanine-project</code> command,
+Mezzanine will generate a <a href="http://www.fabfile.org">Fabric</a> deployment <a data-type="indexterm" data-primary="mezzanine-project program"/><a data-type="indexterm" data-primary="Fabric deployment scripts"/>script at
+<em>myproject/fabfile.py</em> that you can use to deploy your project to a production
+server.  (Fabric is a Python-based tool that helps automate running tasks via
+SSH.) The script is almost 700 lines
+long, and that&#8217;s not counting the included configuration files that are also
+involved in deployment. Why is deploying to production so much more complex? I&#8217;m
+glad you asked.</p>
+
+<p>When run in development, Mezzanine provides the following simplifications (see <a data-type="xref" href="#django_dev_arch"/>):</p>
+
+<ul>
+<li>
+<p>The system uses SQLite as the backend database, and will create the database file if it doesn&#8217;t exist.<a data-type="indexterm" id="sql5" data-primary="SQLite"/></p>
+</li>
+<li>
+<p>The development HTTP server serves up both the static content (images, <em>.css</em> files, JavaScript) as well as the dynamically generated HTML.</p>
+</li>
+<li>
+<p>The development HTTP server uses the (insecure) HTTP, not (secure) HTTPS.</p>
+</li>
+<li>
+<p>The development HTTP server process runs in the foreground, taking over your terminal window.</p>
+</li>
+<li>
+<p>The hostname for the HTTP server is always 127.0.0.1 (<code>localhost</code>).</p>
+</li>
+</ul>
+
+<figure id="django_dev_arch">
+<img src="images/aur2_0502.png" alt="Running Django app in development mode"/>
+<figcaption>Django app in development mode</figcaption>
+</figure>
+
+<p>Now, let&#8217;s look at what happens when you deploy to production.<a data-type="indexterm" data-primary="Django" data-secondary="running an app in development mode"/></p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>PostgreSQL: The Database</h2>
+
+<p>SQLite is a serverless database.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying to production" data-tertiary="Gunicorn application server"/><a data-type="indexterm" data-primary="PostgreSQL" data-secondary="to production"/><a data-type="indexterm" data-primary="PostgreSQL"/><a data-type="indexterm" data-startref="sql5"/> In production, we want to run a
+server-based database, because those have better support for multiple, concurrent requests, and server-based databases allow us to run multiple HTTP servers for load balancing. This means we need to deploy a database management system such as MySQL or PostgreSQL (aka Postgres). Setting up one of these database servers requires more work. We need to do the following:</p>
+<ol>
+<li>
+<p>Install the database software.</p>
+</li>
+<li>
+<p>Ensure the database service is running.</p>
+</li>
+<li>
+<p>Create the database inside the database management system.</p>
+</li>
+<li>
+<p>Create a database user who has the appropriate permissions for the database <span class="keep-together">system.</span></p>
+</li>
+<li>
+<p>Configure our Mezzanine application with the database user credentials and connection information.</p>
+</li>
+
+</ol>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Gunicorn: The Application Server</h2>
+
+<p>Because Mezzanine is a Django-based application, you can run Mezzanine using Django&#8217;s HTTP server, referred as the <em>development server</em> in <a data-type="indexterm" data-primary="development server"/>the
+Django documentation.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="Gunicorn application server"/><a data-type="indexterm" data-primary="application server (Gunicorn)"/><a data-type="indexterm" data-primary="Gunicorn (application server)"/> Here&#8217;s what the Django 1.10 docs have to say about the <a href="http://bit.ly/2cPe8X8">development server</a>.</p>
+<blockquote>
+<p>[D]on’t use this server in anything resembling a production environment. It&#8217;s
+intended only for use while developing. (We’re in the business of making Web
+frameworks, not Web servers.)</p></blockquote>
+
+<p>Django implements the <a data-type="indexterm" data-primary="Web Server Gateway Interface (WSGI)"/><a data-type="indexterm" data-primary="WSGI (Web Server Gateway Interface)"/>standard Web Server Gateway Interface
+(WSGI),<span data-type="footnote">The WSGI protocol is documented in <a href="https://www.python.org/dev/peps/pep-3333">Python Enhancement Proposal (PEP) 3333</a>.</span> so any Python
+HTTP server that supports WSGI is suitable for running a Django application such as Mezzanine. We&#8217;ll use Gunicorn, one of the most popular HTTP WSGI
+servers, which is what the Mezzanine deploy script uses.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Nginx: The Web Server</h2>
+
+<p>Gunicorn will execute our Django application, just like the development server
+does. <a data-type="indexterm" data-primary="static assets"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying to production" data-tertiary="Nginx web server"/><a data-type="indexterm" data-primary="Nginx" data-secondary="web server for Mezzanine application"/>However, Gunicorn won&#8217;t serve any of the static assets associated with the
+application. <em>Static assets</em> are files such as images, <em>.css</em> files, and
+JavaScript files. They are called static because they never change, in contrast
+with the dynamically generated web pages that Gunicorn serves up.</p>
+
+<p>Although Gunicorn can handle TLS encryption, it&#8217;s common to configure Nginx to handle the encryption.<span data-type="footnote">Gunicorn 0.17 added support for TLS encryption. Before that, you had to use a separate application such as Nginx to handle the encryption.</span></p>
+
+<p>We&#8217;re going to use Nginx as our web server for serving static assets and for
+handling the TLS encryption, as shown in <a data-type="xref" href="#nginx_reverse_proxy_image"/>.</p>
+
+<figure id="nginx_reverse_proxy_image">
+<img src="images/aur2_0503.png" alt="Nginx as a reverse proxy"/>
+<figcaption>Nginx as a reverse proxy</figcaption>
+</figure>
+
+<p>We
+need to configure Nginx as a <em>reverse proxy</em> for Gunicorn.<a data-type="indexterm" data-primary="reverse proxy"/> If the request is for
+a static asset, such as a <em>.css</em> file, Nginx will serve that file directly
+from the local filesystem. Otherwise, Nginx will proxy the request to Gunicorn,
+by making an HTTP request against the Gunicorn service that is running on the
+local machine. Nginx uses the URL to determine whether to serve a local file or
+proxy the request to Gunicorn.  Note that requests to Nginx will be (encrypted)
+HTTPS, and all requests that Nginx proxies to Gunicorn will be (unencrypted)
+HTTP.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Supervisor: The Process Manager</h2>
+
+<p>When we run in development mode, we run the application server in the foreground
+of our terminal.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying to production" data-tertiary="Supervisor process manager"/> If we were to close our terminal, the program would
+terminate. For a server application, we need it to run as a background process
+so it doesn&#8217;t terminate, even if we close the terminal session we used to
+start the process.<a data-type="indexterm" data-primary="background process, server application running in"/></p>
+
+<p>The colloquial terms for such a process are  <em>daemon</em> or <em>service</em>.<a data-type="indexterm" data-primary="daemons"/><a data-type="indexterm" data-primary="services"/> We need to run Gunicorn as
+a daemon, and we&#8217;d like to be able to easily stop it and restart it. Numerous service managers can do this job. We&#8217;re going to use
+Supervisor, because that&#8217;s what the Mezzanine deployment scripts use.<a data-type="indexterm" data-primary="Supervisor (service manager)"/></p>
+
+<p>At this point, you should have a sense of the steps involved in deploying
+a web application to production. We&#8217;ll go over how to implement this deployment with Ansible in <a data-type="xref" href="#deploying_mezzanine"/>.</p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+</section>

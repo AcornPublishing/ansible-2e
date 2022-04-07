@@ -1,0 +1,1634 @@
+<section data-type="chapter" id="custom_modules">
+<h1>Custom Modules</h1>
+
+
+<p>Sometimes you want to perform a task that is too complex for the <code>command</code> or <code>shell</code> modules, and there is no existing module that does what you want. In that case, you might want to write your own module.<a data-type="indexterm" data-primary="modules" data-secondary="custom" data-seealso="custom modules"/><a data-type="indexterm" id="ix_cusmod" data-primary="custom modules"/></p>
+
+<p>In the past, I&#8217;ve written custom modules to retrieve my public IP
+address when I&#8217;m behind a network address translation (NAT) getaway, and to initialize the databases in an OpenStack
+deployment. I&#8217;ve thought about writing a custom module for generating
+self-signed TLS certificates, though I&#8217;ve never gotten around to it.</p>
+
+<p>Another common use for custom modules is interacting with a third-party service over a REST API. For example, GitHub offers what it calls Releases, which let you attach binary assets to repositories, and these are exposed via GitHub&#8217;s API.  If your deployment requires you to download a binary asset attached to a private GitHub repository, this would be a good candidate for implementing inside a custom module.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Example: Checking That We Can Reach a Remote Server</h1>
+
+<p>Let&#8217;s say we want to check that we can connect to a remote server on a
+particular port. If we can&#8217;t, we want Ansible to treat that as an error and stop running the play.</p>
+<div data-type="note">
+<p>The custom module we will develop in this chapter is basically a simpler version of the <code>wait_for</code> module.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Using the Script Module Instead of Writing Your Own</h1>
+
+<p>Recall in <a data-type="xref" href="#script_custom_python"/> how we used the <code>script</code> module to execute custom scripts on remote hosts.<a data-type="indexterm" data-primary="custom modules" data-secondary="using script module instead of writing your own"/><a data-type="indexterm" data-primary="script module" data-secondary="using instead of writing your own module"/> Sometimes it&#8217;s simpler to just use the <code>script</code> module rather than write a full-blown Ansible module.</p>
+
+<p>I like putting these types of scripts in a <em>scripts</em> folder along with my playbooks. For example, we could create a script file called
+<em>playbooks/scripts/can_reach.sh</em>  that accepts as arguments the name of a host, the port to connect to, and <a data-type="indexterm" data-primary="can_reach script (example)"/>how long it should try to connect before timing out:</p>
+
+<pre data-type="programlisting">can_reach.sh www.example.com 80 1</pre>
+
+<p>We can create a script as shown in <a data-type="xref" href="#CAN_REACH"/>.</p>
+<div id="CAN_REACH" data-type="example">
+<h5>can_reach.sh</h5>
+
+<pre data-type="programlisting" data-code-language="bash">#!/bin/bash
+host=$1
+port=$2
+timeout=$3
+
+nc -z -w $timeout $host $port</pre></div>
+
+<p>We can then invoke this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: run my custom script
+  script: scripts/can_reach.sh www.example.com 80 1</pre>
+
+<p>Keep in mind that your script will execute on the remote hosts, just like Ansible modules do. Therefore, any programs your script requires must have been installed previously on the remote hosts. For example,
+you can write your script in Ruby, as long as Ruby has been installed on the remote hosts, and the first line of the script invokes the Ruby interpreter, such as the following:</p>
+
+<pre data-type="programlisting">#!/usr/bin/ruby</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>can_reach as a Module</h1>
+
+<p>Next, let&#8217;s implement <code>can_reach</code> as a proper Ansible module,<a data-type="indexterm" data-primary="custom modules" data-secondary="example, checking if can reach remote server"/> which we will be able to invoke like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: check if host can reach the database server
+  can_reach: host=db.example.com port=5432 timeout=1</pre>
+
+<p>This checks whether the host can make a TCP connection to <em>db.example.com</em> on port 5432. It will time out after one second if it fails to make a connection.</p>
+
+<p>We&#8217;ll use this example throughout the rest of this chapter.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Where to Put Custom Modules</h1>
+
+<p>Ansible will look in the <em>library</em> directory relative to the playbook. <a data-type="indexterm" data-primary="custom modules" data-secondary="where to store"/><a data-type="indexterm" data-primary="modules" data-secondary="custom" data-tertiary="where to store"/><a data-type="indexterm" data-primary="Library directory, custom modules in"/><a data-type="indexterm" data-primary="playbooks/library/" data-primary-sortas="playbooks/library"/>In our example, we put our playbooks in the <em>playbooks</em> directory, so we will put our custom module at <em>playbooks/library/can_reach</em>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>How Ansible Invokes Modules</h1>
+
+<p>Before we implement the module, let&#8217;s go over how <a data-type="indexterm" id="ix_cusmodinv" data-primary="custom modules" data-secondary="how Ansible invokes modules"/><a data-type="indexterm" id="ix_modinv" data-primary="modules" data-secondary="how Ansible invokes"/>Ansible invokes them.
+Ansible will do the following:</p>
+<ol>
+<li>
+<p>Generate a standalone Python script with the arguments (Python modules only)</p>
+</li>
+<li>
+<p>Copy the module to the host</p>
+</li>
+<li>
+<p>Create an arguments file on the host (non-Python modules only)</p>
+</li>
+<li>
+<p>Invoke the module on the host, passing the arguments file as an argument</p>
+</li>
+<li>
+<p>Parse the standard output of the module</p>
+</li>
+
+</ol>
+
+<p>Let&#8217;s look at each of these steps in more detail.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Generate a Standalone Python Script with the Arguments <span class="keep-together">(Python Only)</span></h2>
+
+<p>If the module is written in Python and uses the helper code that Ansible provides (described later), then Ansible will generate a self-contained Python script that injects helper code, as well as the module arguments.<a data-type="indexterm" data-primary="arguments script (Python modules)"/><a data-type="indexterm" data-primary="modules" data-secondary="how Ansible invokes" data-tertiary="generating Python script with module arguments"/><a data-type="indexterm" data-primary="Python" data-secondary="script with module arguments, for Python modules"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Copy the Module to the Host</h2>
+
+<p>Ansible will copy the generated Python script (for Python-based modules) or the local file <em>playbooks/library/can_reach</em> (for non-Python-based modules) to a temporary directory on the remote host.<a data-type="indexterm" data-primary="modules" data-secondary="how Ansible invokes" data-tertiary="copying the module to the host"/> If you are accessing the remote host as the <code>ubuntu</code> user, Ansible will copy the file to a path that looks like the following:</p>
+
+<p><em>/home/ubuntu/.ansible/tmp/ansible-tmp-1412459504.14-47728545618200/can_reach</em></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Create an Arguments File on the Host (Non-Python Only)</h2>
+
+<p>If the module is not written in Python, Ansible will create a file on the remote host with a <a data-type="indexterm" data-primary="modules" data-secondary="how Ansible invokes" data-tertiary="creating arguments file on host for non-Python modules"/><a data-type="indexterm" data-primary="arguments file (non-Python modules)"/>name like this:</p>
+
+<p><em>/home/ubuntu/.ansible/tmp/ansible-tmp-1412459504.14-47728545618200/arguments</em></p>
+
+<p class="pagebreak-before">If we invoke the module like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: check if host can reach the database server
+  can_reach: host=db.example.com port=5432 timeout=1</pre>
+
+<p>then the arguments file will have the following content:</p>
+
+<pre data-type="programlisting">host=db.example.com port=5432 timeout=1</pre>
+
+<p>We can tell Ansible to generate the arguments file for the module as JSON, by adding the <a data-type="indexterm" data-primary="JSON" data-secondary="arguments file for module, generating as"/>following line to <em>playbooks/library/can_reach</em>:</p>
+
+<pre data-type="programlisting" data-code-language="bash"># WANT_JSON</pre>
+
+<p>If our module is configured for JSON input, the arguments file will look like this:</p>
+
+<pre data-type="programlisting" data-code-language="json">{"host": "www.example.com", "port": "80", "timeout": "1"}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Invoke the Module</h2>
+
+<p>Ansible will call the module and pass the arguments file as arguments.<a data-type="indexterm" data-primary="modules" data-secondary="how Ansible invokes" data-tertiary="invoking the module"/> If it&#8217;s a Python-based module, Ansible executes the equivalent of the following (with <em>/path/to/</em> replaced by the actual path):</p>
+
+<pre data-type="programlisting">/path/to/can_reach</pre>
+
+<p>If it&#8217;s a non-Python-based module, Ansible will look at the first line of the
+module to determine the interpreter and execute the equivalent of this:</p>
+
+<pre data-type="programlisting">/path/to/interpreter /path/to/can_reach /path/to/arguments</pre>
+
+<p>Assuming the <code>can_reach</code> module is implemented as a Bash script and starts with this:</p>
+
+<pre data-type="programlisting">#!/bin/bash</pre>
+
+<p>then Ansible will do something like this:</p>
+
+<pre data-type="programlisting">/bin/bash /path/to/can_reach /path/to/arguments</pre>
+
+<p>But even this isn&#8217;t strictly true. What Ansible actually does is the following:</p>
+
+<pre data-type="programlisting">/bin/sh -c 'LANG=en_US.UTF-8 LC_CTYPE=en_US.UTF-8 /bin/bash /path/to/can_reach \
+/path/to/arguments; rm -rf /path/to/ &gt;/dev/null 2&gt;&amp;1'</pre>
+
+<p>You can see the exact command that Ansible invokes by passing <code>-vvv</code> to
+<code>ansible-playbook</code>.<a data-type="indexterm" data-primary="modules" data-secondary="how Ansible invokes" data-startref="ix_modinv"/><a data-type="indexterm" data-primary="custom modules" data-secondary="how Ansible invokes modules" data-startref="ix_cusmodinv"/><a data-type="indexterm" data-primary="ansible-playbook -vvv command"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Expected Outputs</h1>
+
+<p>Ansible expects modules to output JSON. <a data-type="indexterm" data-primary="JSON" data-secondary="expected module outputs"/><a data-type="indexterm" data-primary="modules" data-secondary="expected outputs"/><a data-type="indexterm" data-primary="custom modules" data-secondary="expected outputs"/>For example:</p>
+
+<pre data-type="programlisting">{'changed': false, 'failed': true, 'msg': 'could not reach the host'}</pre>
+<div data-type="note">
+<p>Prior to version 1.8, Ansible supported a shorthand output format, also known as
+<em>baby JSON</em>, that looked like <code>key=value</code>. <a data-type="indexterm" data-primary="baby JSON"/>Ansible dropped support for this format
+in 1.8.
+As you&#8217;ll see later, if you write your modules in Python, Ansible provides
+helper methods that make it easy to generate JSON output.</p>
+</div>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Output Variables that Ansible Expects</h2>
+
+<p>Your module can return whatever variables you like, but Ansible has special
+treatment for certain returned variables.<a data-type="indexterm" data-primary="modules" data-secondary="expected outputs" data-tertiary="output variables"/><a data-type="indexterm" data-primary="custom modules" data-secondary="expected outputs" data-tertiary="output variables"/></p>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>changed</h3>
+
+<p>All Ansible modules should return a <code>changed</code> variable.<a data-type="indexterm" data-primary="output variables" data-secondary="changed"/><a data-type="indexterm" data-primary="changed variable"/> The <code>changed</code> variable is a Boolean that indicates whether the module execution caused the host to change state. When Ansible runs, it will show in the output whether a state change has happened. If a task has a <code>notify</code> clause to notify a handler, the notification will fire only if <code>changed</code> is <code>true</code>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>failed</h3>
+
+<p>If the module fails to complete, it should return <code>failed=true</code>.<a data-type="indexterm" data-primary="failed variable"/><a data-type="indexterm" data-primary="output variables" data-secondary="failed"/> Ansible will treat this task execution as a failure and will not run any further tasks against the host that failed, unless the task has an <code>ignore_errors</code> or <code>failed_when</code> clause.<a data-type="indexterm" data-primary="ignore_errors clause"/><a data-type="indexterm" data-primary="failed_when clause"/></p>
+
+<p>If the module succeeds, you can either return <code>failed=false</code> or you can simply leave out the variable.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>msg</h3>
+
+<p>Use the <code>msg</code> variable to add a descriptive message that describes the reason that a module failed.<a data-type="indexterm" data-primary="msg variable"/><a data-type="indexterm" data-primary="output variables" data-secondary="msg"/></p>
+
+<p>If a task fails, and the module returns a <code>msg</code> variable, then Ansible will output that variable slightly differently than it does the other variables. For example, if a module returns the following:</p>
+
+<pre data-type="programlisting" data-code-language="json">{"failed": true, "msg": "could not reach www.example.com:81"}</pre>
+
+<p>then Ansible will output the following lines when executing this task:</p>
+
+<pre data-type="programlisting">failed: [vagrant1] =&gt; {"failed": true}
+msg: could not reach www.example.com:81</pre>
+</section>
+
+
+
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Implementing Modules in Python</h1>
+
+<p>If you implement your custom module in Python, Ansible provides
+the <code>AnsibleModule</code> Python class that makes it easier <a data-type="indexterm" data-primary="AnsibleModule class"/><a data-type="indexterm" id="ix_cusmodPy" data-primary="custom modules" data-secondary="implementing in Python"/><a data-type="indexterm" id="ix_Pycusmod" data-primary="Python" data-secondary="implementing custom modules in"/>to do the following:</p>
+
+<ul>
+<li>
+<p>Parse the inputs</p>
+</li>
+<li>
+<p>Return outputs in JSON format</p>
+</li>
+<li>
+<p>Invoke external programs</p>
+</li>
+</ul>
+
+<p>In fact, when writing a Python module, Ansible will inject the arguments
+directly into the generated Python file rather than require you to parse a
+separate arguments file. We&#8217;ll discuss how that works later in this chapter.</p>
+
+<p>We&#8217;ll create our module in Python by creating a <em>can_reach</em> file. I&#8217;ll start with the implementation and then break it down (see <a data-type="xref" href="#can-reach"/>).</p>
+<div id="can-reach" data-type="example">
+<h5>can_reach</h5>
+
+<pre data-type="programlisting" data-code-language="python">#!/usr/bin/python
+from ansible.module_utils.basic import AnsibleModule <a class="co" id="co_custom_modules_CO1-1" href="#callout_custom_modules_CO1-1"><img src="callouts/1.png" alt="1"/></a>
+
+def can_reach(module, host, port, timeout):
+    nc_path = module.get_bin_path('nc', required=True) <a class="co" id="co_custom_modules_CO1-2" href="#callout_custom_modules_CO1-2"><img src="callouts/2.png" alt="2"/></a>
+    args = [nc_path, "-z", "-w", str(timeout),
+            host, str(port)]
+    (rc, stdout, stderr) = module.run_command(args) <a class="co" id="co_custom_modules_CO1-3" href="#callout_custom_modules_CO1-3"><img src="callouts/3.png" alt="3"/></a>
+    return rc == 0
+
+def main():
+    module = AnsibleModule( <a class="co" id="co_custom_modules_CO1-4" href="#callout_custom_modules_CO1-4"><img src="callouts/4.png" alt="4"/></a>
+        argument_spec=dict( <a class="co" id="co_custom_modules_CO1-5" href="#callout_custom_modules_CO1-5"><img src="callouts/5.png" alt="5"/></a>
+            host=dict(required=True), <a class="co" id="co_custom_modules_CO1-6" href="#callout_custom_modules_CO1-6"><img src="callouts/6.png" alt="6"/></a>
+            port=dict(required=True, type='int'),
+            timeout=dict(required=False, type='int', default=3) <a class="co" id="co_custom_modules_CO1-7" href="#callout_custom_modules_CO1-7"><img src="callouts/7.png" alt="7"/></a>
+        ),
+        supports_check_mode=True <a class="co" id="co_custom_modules_CO1-8" href="#callout_custom_modules_CO1-8"><img src="callouts/8.png" alt="8"/></a>
+    )
+
+    # In check mode, we take no action
+    # Since this module never changes system state, we just
+    # return changed=False
+    if module.check_mode: <a class="co" id="co_custom_modules_CO1-9" href="#callout_custom_modules_CO1-9"><img src="callouts/9.png" alt="9"/></a>
+        module.exit_json(changed=False) <a class="co" id="co_custom_modules_CO1-10" href="#callout_custom_modules_CO1-10"><img src="callouts/10.png" alt="10"/></a>
+
+    host = module.params['host'] <a class="co" id="co_custom_modules_CO1-11" href="#callout_custom_modules_CO1-11"><img src="callouts/11.png" alt="11"/></a>
+    port = module.params['port']
+    timeout = module.params['timeout']
+
+    if can_reach(module, host, port, timeout):
+        module.exit_json(changed=False)
+    else:
+        msg = "Could not reach %s:%s" % (host, port)
+        module.fail_json(msg=msg) <a class="co" id="co_custom_modules_CO1-12" href="#callout_custom_modules_CO1-12"><img src="callouts/12.png" alt="12"/></a>
+
+if __name__ == "__main__":
+    main()</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_custom_modules_CO1-1" href="#co_custom_modules_CO1-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Imports the <code>AnsibleModule</code> helper class</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-2" href="#co_custom_modules_CO1-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Gets the path of an external program</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-3" href="#co_custom_modules_CO1-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>Invokes an external program</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-4" href="#co_custom_modules_CO1-4"><img src="callouts/4.png" alt="4"/></a></dt>
+<dd><p>Instantiates the <code>AnsibleModule</code> helper class</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-5" href="#co_custom_modules_CO1-5"><img src="callouts/5.png" alt="5"/></a></dt>
+<dd><p>Specifies the permitted set of arguments</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-6" href="#co_custom_modules_CO1-6"><img src="callouts/6.png" alt="6"/></a></dt>
+<dd><p>A required argument</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-7" href="#co_custom_modules_CO1-7"><img src="callouts/7.png" alt="7"/></a></dt>
+<dd><p>An optional argument with a default value</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-8" href="#co_custom_modules_CO1-8"><img src="callouts/8.png" alt="8"/></a></dt>
+<dd><p>Specifies that this module supports check mode</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-9" href="#co_custom_modules_CO1-9"><img src="callouts/9.png" alt="9"/></a></dt>
+<dd><p>Tests whether the module is running in check mode</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-10" href="#co_custom_modules_CO1-10"><img src="callouts/10.png" alt="10"/></a></dt>
+<dd><p>Exits successfully, passing a return value</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-11" href="#co_custom_modules_CO1-11"><img src="callouts/11.png" alt="11"/></a></dt>
+<dd><p>Extracts an argument</p></dd>
+<dt><a class="co" id="callout_custom_modules_CO1-12" href="#co_custom_modules_CO1-12"><img src="callouts/12.png" alt="12"/></a></dt>
+<dd><p>Exits with failure, passing an error message</p></dd>
+</dl>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Parsing Arguments</h2>
+
+<p>It&#8217;s easier to understand the way <code>AnsibleModule</code> handles argument parsing by looking at an example.<a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="parsing arguments"/> Recall that our module is invoked like this:</p>
+
+<pre data-type="programlisting" data-code-language="json">- name: check if host can reach the database server
+  can_reach: host=db.example.com port=5432 timeout=1</pre>
+
+<p>Let&#8217;s assume that the <code>host</code> and <code>port</code> parameters are required, and <code>timeout</code> is an optional parameter with a default value of 3 seconds.</p>
+
+<p>You instantiate an <code>AnsibleModule</code> object by passing it an <code>argument_spec</code>, which is a dictionary in which the keys are parameter names and the values are dictionaries that contain information about the parameters.<a data-type="indexterm" data-primary="argument_spec"/></p>
+
+<pre data-type="programlisting" data-code-language="python">    module = AnsibleModule(
+        argument_spec=dict(
+            ...</pre>
+
+<p>In our example, we declare a required argument named <code>host</code>. Ansible will report an error if this argument isn&#8217;t passed to the module when we use it in a task:</p>
+
+<pre data-type="programlisting" data-code-language="python">            host=dict(required=True),</pre>
+
+<p>The variable named <code>timeout</code> is optional. Ansible assumes that arguments are strings unless specified otherwise. Our <code>timeout</code> variable is an integer, so we specify the type as <code>int</code> so that Ansible will automatically convert it into a Python number. If <code>timeout</code> is not specified, the module will assume it has a value of 3:</p>
+
+<pre data-type="programlisting" data-code-language="python">            timeout=dict(required=False, type='int', default=3)</pre>
+
+<p>The <code>AnsibleModule</code> constructor takes arguments other than <code>argument_spec</code>. In the preceding example, we added this argument:</p>
+
+<pre data-type="programlisting" data-code-language="python">    supports_check_mode = True</pre>
+
+<p>This indicates that our module supports check mode. We&#8217;ll explain that a little later in this chapter.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Accessing Parameters</h2>
+
+<p>Once you&#8217;ve declared an <code>AnsibleModule</code> object, you can access the values of the arguments through the <code>params</code> dictionary,<a data-type="indexterm" data-primary="params dictionary"/><a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="accessing parameters"/> like this:</p>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(...)
+
+host = module.params["host"]
+port = module.params["port"]
+timeout = module.params["timeout"]</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Importing the AnsibleModule Helper Class</h2>
+
+<p>Starting with Ansible 2.1.0, Ansible deploys a module to the host by sending a
+ZIP file containing the module file along with the imported helper files.<a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="importing AnsibleModule helper class"/><a data-type="indexterm" data-primary="AnsibleModule class" data-secondary="importing"/> One
+consequence of this it that you can now explicitly import classes, such as the following:</p>
+
+<pre data-type="programlisting" data-code-language="python">from ansible.module_utils.basic import AnsibleModule</pre>
+
+<p>Prior to Ansible 2.1.0, the <code>import</code> statement in an Ansible module was really a
+pseudo import statement.<a data-type="indexterm" data-primary="import statements"/> In these earlier versions, Ansible copied only a single
+Python file to the remote host to execute it.  Ansible simulated the behavior of
+a traditional Python import by including the imported code directly into the
+generated Python file (similar to how an <code>#include</code> statement works in C or
+C+\+). Because these did not behave like a traditional Python import, if you
+explicitly imported a class, the Ansible <span class="keep-together">module</span> debugging scripts would not work
+properly.  You had to use a wildcard import, and put the import at the end
+of the file, just before invoking the main function:</p>
+
+<pre data-type="programlisting" data-code-language="python">...
+from ansible.module_utils.basic import *
+if __name__ == "__main__":
+    main()</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Argument Options</h2>
+
+<p>For each argument to an Ansible module, you can <a data-type="indexterm" id="ix_argopt" data-primary="arguments (module)" data-secondary="options for"/><a data-type="indexterm" id="ix_cusmodPyargop" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="argument options"/>specify several options, as listed in <a data-type="xref" href="#argoption_table"/>.</p>
+<table id="argoption_table">
+<caption>Argument options</caption>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>required</p></td>
+<td><p>If <code>true</code>, argument is required</p></td>
+</tr>
+<tr>
+<td><p>default</p></td>
+<td><p>Default value if argument is not required</p></td>
+</tr>
+<tr>
+<td><p>choices</p></td>
+<td><p>A list of possible values for the argument</p></td>
+</tr>
+<tr>
+<td><p>aliases</p></td>
+<td><p>Other names you can use as an alias for this argument</p></td>
+</tr>
+<tr>
+<td><p>type</p></td>
+<td><p>Argument type. Allowed values: <code>'str'</code>, <code>'list'</code>, <code>'dict'</code>, <code>'bool'</code>, <code>'int'</code>, <code>'float'</code></p></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>required</h3>
+
+<p>The <code>required</code> option is the only option that you should always specify.<a data-type="indexterm" data-primary="required option"/> If it is <code>true</code>, Ansible will return an error if the user fails to specify the argument.</p>
+
+<p>In our <code>can_reach</code> module example, <code>host</code> and <code>port</code> are required, and <code>timeout</code> is not required.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>default</h3>
+
+<p>For arguments that have <code>required=False</code> set, you should generally specify a default value for that option.<a data-type="indexterm" data-primary="default option"/> In our example:</p>
+
+<pre data-type="programlisting" data-code-language="python">timeout=dict(required=False, type='int', default=3)</pre>
+
+<p>If the user invokes the module like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">can_reach: host=www.example.com port=443</pre>
+
+<p>then <code>module.params["timeout"]</code> will contain the value <code>3</code>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3" class="pagebreak-before">
+<h3>choices</h3>
+
+<p>The <code>choices</code> option allows you to restrict the allowed arguments to a
+predefined list.<a data-type="indexterm" data-primary="choices option"/></p>
+
+<p>Consider the <code>distros</code> argument in the <a data-type="indexterm" data-primary="distros argument"/>following example:</p>
+
+<pre data-type="programlisting" data-code-language="python">distro=dict(required=True, choices=['ubuntu', 'centos', 'fedora'])</pre>
+
+<p>If the user were to pass an argument that was not in the list—for example:</p>
+
+<pre data-type="programlisting">distro=suse</pre>
+
+<p>this would cause Ansible to throw an error.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>aliases</h3>
+
+<p>The <code>aliases</code> option allows you <a data-type="indexterm" data-primary="aliases option"/>to use different names to refer to the same argument.<a data-type="indexterm" data-primary="apt module" data-secondary="package argument"/><a data-type="indexterm" data-primary="package argument"/> For example, consider the <code>package</code> argument in the <code>apt</code> module:</p>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(
+    argument_spec=dict(
+        ...
+        package = dict(default=None, aliases=['pkg', 'name'], type='list'),
+    )
+)</pre>
+
+<p>Since <code>pkg</code> and <code>name</code> are aliases for the <code>package</code> argument, these invocations are all equivalent:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- apt: package=vim
+- apt: name=vim
+- apt: pkg=vim</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>type</h3>
+
+<p>The <code>type</code> option enables you to specify the type of an argument.<a data-type="indexterm" data-primary="type option"/> By default, Ansible assumes all arguments are strings.</p>
+
+<p>However, you can specify a type for the argument, and Ansible will convert the argument to the desired type.<a data-type="indexterm" data-primary="int type"/><a data-type="indexterm" data-primary="float type"/><a data-type="indexterm" data-primary="bool type"/><a data-type="indexterm" data-primary="dict type"/><a data-type="indexterm" data-primary="lists" data-secondary="list type"/><a data-type="indexterm" data-primary="strings" data-secondary="str type"/> The types supported are as follows:</p>
+
+<ul>
+<li>
+<p><code>str</code></p>
+</li>
+<li>
+<p><code>list</code></p>
+</li>
+<li>
+<p><code>dict</code></p>
+</li>
+<li>
+<p><code>bool</code></p>
+</li>
+<li>
+<p><code>int</code></p>
+</li>
+<li>
+<p><code>float</code></p>
+</li>
+</ul>
+
+<p>In our example, we specified the <code>port</code> argument as <code>int</code>:</p>
+
+<pre data-type="programlisting" data-code-language="python">port=dict(required=True, type='int'),</pre>
+
+<p>When we access it from the <code>params</code> dictionary,<a data-type="indexterm" data-primary="params dictionary"/> like this:</p>
+
+<pre data-type="programlisting" data-code-language="python">port = module.params['port']</pre>
+
+<p>the value of the <code>port</code> variable will be an integer. If we had not specified the type as <code>int</code> when declaring the <code>port</code> variable, the <code>module.params['port']</code> value would have been a string instead of an integer.</p>
+
+<p>Lists are comma-delimited.<a data-type="indexterm" data-primary="lists" data-secondary="list module parameter"/> For example, if you have a module named <code>foo</code> with a list parameter named <code>colors</code>:</p>
+
+<pre data-type="programlisting" data-code-language="python">colors=dict(required=True, type='list')</pre>
+
+<p>then you pass a <code>list</code> like this:</p>
+
+<pre data-type="programlisting" data-code-language="json">foo: colors=red,green,blue</pre>
+
+<p>For dictionaries, you can either use <code>key=value</code> pairs, delimited by commas, or you can use JSON inline.<a data-type="indexterm" data-primary="dictionaries" data-secondary="dict module parameter"/></p>
+
+<p>For example, if you have a module named <code>bar</code>, with a <code>dict</code> parameter named <code>tags</code>:</p>
+
+<pre data-type="programlisting" data-code-language="python">tags=dict(required=False, type='dict', default={})</pre>
+
+<p>then you can pass the argument like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- bar: tags=env=staging,function=web</pre>
+
+<p>Or you can pass the argument like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- bar: tags={"env": "staging", "function": "web"}</pre>
+
+<p>The official Ansible documentation uses the term <em>complex args</em> to refer to lists and dictionaries that are passed to modules as arguments. See <a data-type="xref" href="#COMPLEX_ARGS"/> for how to pass these types of arguments in playbooks.<a data-type="indexterm" data-primary="complex arguments"/><a data-type="indexterm" data-primary="arguments (module)" data-secondary="options for" data-startref="ix_argopt"/><a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="argument options" data-startref="ix_cusmodPyargop"/></p>
+</section>
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>AnsibleModule Initializer Parameters</h2>
+
+<p>The <code>AnsibleModule</code> initializer method takes various arguments, listed in <a data-type="xref" href="#ansiblemod_init_args"/>.<a data-type="indexterm" id="ix_initAM" data-primary="initializer method (AnsibleModule), parameters"/><a data-type="indexterm" id="ix_cusmodPyAMinit" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="AnsibleModule initializer method parameters"/><a data-type="indexterm" id="ix_AnsModinit" data-primary="AnsibleModule class" data-secondary="initializer method parameters"/> The only required argument is <code>argument_spec</code>.</p>
+<table id="ansiblemod_init_args">
+<caption>AnsibleModule initializer arguments</caption>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>argument_spec</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>Dictionary that contains information about arguments</p></td>
+</tr>
+<tr>
+<td><p>bypass_checks</p></td>
+<td><p>False</p></td>
+<td><p>If true, don&#8217;t check any of the parameter constraints</p></td>
+</tr>
+<tr>
+<td><p>no_log</p></td>
+<td><p>False</p></td>
+<td><p>If true, don&#8217;t log the behavior of this module</p></td>
+</tr>
+<tr>
+<td><p>check_invalid_arguments</p></td>
+<td><p>True</p></td>
+<td><p>If true, return error if user passed an unknown argument</p></td>
+</tr>
+<tr>
+<td><p>mutually_exclusive</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>List of mutually exclusive arguments</p></td>
+</tr>
+<tr>
+<td><p>required_together</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>List of arguments that must appear together</p></td>
+</tr>
+<tr>
+<td><p>required_one_of</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>List of arguments where at least one must be present</p></td>
+</tr>
+<tr>
+<td><p>add_file_common_args</p></td>
+<td><p>False</p></td>
+<td><p>Supports the arguments of the <code>file</code> module</p></td>
+</tr>
+<tr>
+<td><p>supports_check_mode</p></td>
+<td><p>False</p></td>
+<td><p>If true, indicates module supports check mode</p></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>argument_spec</h3>
+
+<p>This is a dictionary that contains the descriptions of the allowed arguments for
+the module, as described in the previous section.<a data-type="indexterm" data-primary="argument_spec"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>no_log</h3>
+
+<p>When Ansible executes a module on a host, the module will log output to the syslog,
+which on Ubuntu is at <em>/var/log/syslog</em>.<a data-type="indexterm" data-primary="logging from module execution, disabling"/><a data-type="indexterm" data-primary="no_log argument"/></p>
+
+<p>The logging output looks like this:</p>
+
+<pre data-type="programlisting">Sep 28 02:31:47 vagrant-ubuntu-trusty-64 ansible-ping: Invoked with data=None
+Sep 28 02:32:18 vagrant-ubuntu-trusty-64 ansible-apt: Invoked with dpkg_options=
+force-confdef,force-confold upgrade=None force=False name=nginx package=['nginx'
+] purge=False state=installed update_cache=True default_release=None install_rec
+ommends=True deb=None cache_valid_time=None Sep 28 02:33:01 vagrant-ubuntu-trust
+y-64 ansible-file: Invoked with src=None
+original_basename=None directory_mode=None force=False remote_src=None selevel=N
+one seuser=None recurse=False serole=None content=None delimiter=None state=dire
+ctory diff_peek=None mode=None regexp=None owner=None group=None path=/etc/nginx
+/ssl backup=None validate=None setype=None
+Sep 28 02:33:01 vagrant-ubuntu-trusty-64 ansible-copy: Invoked with src=/home/va
+grant/.ansible/tmp/ansible-tmp-1411871581.19-43362494744716/source directory_mod
+e=None force=True remote_src=None dest=/etc/nginx/ssl/nginx.key selevel=None seu
+ser=None serole=None group=None content=NOT_LOGGING_PARAMETER setype=None origin
+al_basename=nginx.key delimiter=None mode=0600 owner=root regexp=None validate=N
+one backup=False
+Sep 28 02:33:01 vagrant-ubuntu-trusty-64 ansible-copy: Invoked with src=/home/va
+grant/.ansible/tmp/ansible-tmp-1411871581.31-95111161791436/source directory_mod
+e=None force=True remote_src=None dest=/etc/nginx/ssl/nginx.crt selevel=None seu
+ser=None serole=None group=None content=NOT_LOGGING_PARAMETER setype=None origin
+al_basename=nginx.crt delimiter=None mode=None owner=None regexp=None validate=N
+one backup=False</pre>
+
+<p>If a module accepts sensitive information as an argument, you might want to disable this logging. To configure a module so that it does not write to syslog, pass the
+<code>no_log=True</code> parameter to the <code>AnsibleModule</code> initializer.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>check_invalid_arguments</h3>
+
+<p>By default, Ansible will verify that all of the arguments that a user passed to
+a module are legal arguments.<a data-type="indexterm" data-primary="check_invalid_arguments"/> You can disable this check by passing the
+<code>check_invalid_&#x200b;argu&#x2060;ments=False</code> parameter to the <code>AnsibleModule</code> initializer.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>mutually_exclusive</h3>
+
+<p>The <code>mutually_exclusive</code> parameter is a list of arguments that cannot be specified during the same module invocation.<a data-type="indexterm" data-primary="mutually_exclusive parameter"/> For example, the <code>lineinfile</code> module allows you to add a line to a file. You can use the <code>insertbefore</code> argument to specify which line it should appear before, or the <code>insertafter</code> argument to specify which line it should appear after, but you can&#8217;t specify both.</p>
+
+<p>Therefore, this module specifies that the two arguments are mutually exclusive, like this:</p>
+
+<pre data-type="programlisting" data-code-language="python">mutually_exclusive=[['insertbefore', 'insertafter']]</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>required_one_of</h3>
+
+<p>The <code>required_one_of</code> parameter expects a list of arguments with at least one that must be passed to the module.<a data-type="indexterm" data-primary="required_one_of parameter"/> For example, the <code>pip</code> module, which is used for installing Python packages, can take either the name of a package or the name of a requirements file that contains a list of packages. The module specifies that one of these arguments is required like this:</p>
+
+<pre data-type="programlisting" data-code-language="python">required_one_of=[['name', 'requirements']]</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>add_file_common_args</h3>
+
+<p>Many modules create or modify a file.<a data-type="indexterm" data-primary="add_file_common_args"/> A user will often want to set some attributes on the resulting file, such as the owner, group, and file permissions.</p>
+
+<p>You could invoke the <code>file</code> module to set these parameters,<a data-type="indexterm" data-primary="file module"/> like
+this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: download a file
+  get_url: url=http://www.example.com/myfile.dat dest=/tmp/myfile.dat
+
+- name: set the permissions
+  file: path=/tmp/myfile.dat owner=ubuntu mode=0600</pre>
+
+<p>As a shortcut, Ansible allows you to specify that a module will accept all of the same arguments as the <code>file</code> module, so you can simply set the file attributes by passing the relevant arguments to the module that created or modified the file. For example:</p>
+
+<pre data-type="programlisting">- name: download a file
+  get_url: url=http://www.example.com/myfile.dat dest=/tmp/myfile.dat \
+  owner=ubuntu mode=0600</pre>
+
+<p>To specify that a module should support these arguments:</p>
+
+<pre data-type="programlisting" data-code-language="python">add_file_common_args=True</pre>
+
+<p>The <code>AnsibleModule</code> module provides helper methods for working
+with these arguments.</p>
+
+<p>The <code>load_file_common_arguments</code> method takes the parameters dictionary as an
+argument and returns a parameters dictionary that contains all of the arguments
+that relate to setting file attributes.<a data-type="indexterm" data-primary="load_file_common_arguments method"/></p>
+
+<p>The <code>set_fs_attributes_if_different</code> method takes a file parameters dictionary
+and a Boolean indicating whether a host state change has occurred yet.<a data-type="indexterm" data-primary="set_fs_attributes_if_different method"/> The method
+sets the file attributes as a side effect and returns <code>true</code> if there was a host
+state change (either the initial argument was true, or it made a change to the
+file as part of the side effect).</p>
+
+<p>If you are using the common file arguments, do not specify the arguments explicitly. To
+get access to these attributes in your code, use the helper methods to extract
+the arguments and set the file attributes, like this:</p>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(
+    argument_spec=dict(
+        dest=dict(required=True),
+        ...
+    ),
+    add_file_common_args=True
+)
+
+# "changed" is True if module caused host to change state
+changed = do_module_stuff(param)
+
+file_args = module.load_file_common_arguments(module.params)
+
+changed = module.set_fs_attributes_if_different(file_args, changed)
+module.exit_json(changed=changed, ...)</pre>
+<div data-type="note">
+<p>Ansible assumes your module has an argument named <code>path</code> or <code>dest</code>, which
+contains the path to the file.<a data-type="indexterm" data-primary="paths" data-secondary="path argument"/><a data-type="indexterm" data-primary="dest argument"/></p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>bypass_checks</h3>
+
+<p>Before an Ansible module executes, it first checks that all of the argument
+constraints are satisfied, and returns an error if they aren&#8217;t.<a data-type="indexterm" data-primary="bypass_checks parameter"/> These include the following:</p>
+
+<ul class="pagebreak-before">
+<li>
+<p>No mutually exclusive arguments are present.</p>
+</li>
+<li>
+<p>Arguments marked with the <code>required</code> option are present.</p>
+</li>
+<li>
+<p>Arguments restricted by the <code>choices</code> option have the expected values.</p>
+</li>
+<li>
+<p>Arguments that specify a <code>type</code> have values that are consistent with the <code>type</code>.</p>
+</li>
+<li>
+<p>Arguments marked as <code>required_together</code> appear together.</p>
+</li>
+<li>
+<p>At least one argument in the list of <code>required_one_of</code> is present.</p>
+</li>
+</ul>
+
+<p>You can disable all of these checks by setting <code>bypass_checks=True</code>.<a data-type="indexterm" data-primary="initializer method (AnsibleModule), parameters" data-startref="ix_initAM"/><a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="AnsibleModule initializer method parameters" data-startref="ix_cusmodPyAMinit"/><a data-type="indexterm" data-primary="AnsibleModule class" data-secondary="initializer method parameters" data-startref="ix_AnsModinit"/></p>
+</section>
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Returning Success or Failure</h2>
+
+<p>Use the <code>exit_json</code> method to return success.<a data-type="indexterm" data-primary="success or failure, returning from module execution"/><a data-type="indexterm" data-primary="AnsibleModule class" data-secondary="exit_json method"/><a data-type="indexterm" data-primary="exit_json method (AnsibleModule)"/><a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="returning success or failure"/><a data-type="indexterm" data-primary="changed variable" data-secondary="returning as exit_json method argument"/> You should always return <code>changed</code> as an argument, and it&#8217;s good practice to return <code>msg</code> with a meaningful message:</p>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(...)
+...
+module.exit_json(changed=False, msg="meaningful message goes here")</pre>
+
+<p>Use the <code>fail_json</code> method to indicate failure. <a data-type="indexterm" data-primary="AnsibleModule class" data-secondary="fail_json method"/><a data-type="indexterm" data-primary="fail_json method (AnsibleModule)"/>You should always return a <code>msg</code> parameter<a data-type="indexterm" data-primary="msg variable" data-secondary="returning in fail_json method parameter"/> to explain to the user the reason for the failure:</p>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(...)
+...
+module.fail_json(msg="Out of disk space")</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Invoking External Commands</h2>
+
+<p>The <code>AnsibleModule</code> class provides the <code>run_command</code> convenience method for calling an external program, which wraps the native Python <code>subprocess</code> module.<a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="invoking external commands"/><a data-type="indexterm" data-primary="commands" data-secondary="external, invoking with custom module"/> It accepts the arguments listed in <a data-type="xref" href="#runcommand_args"/>.<a data-type="indexterm" data-primary="run_command method arguments"/></p>
+<table id="runcommand_args">
+<caption>run_command arguments</caption>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>args (default)</p></td>
+<td><p>String or list of strings</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>The command to be executed (see the following section)</p></td>
+</tr>
+<tr>
+<td><p>check_rc</p></td>
+<td><p>Boolean</p></td>
+<td><p>False</p></td>
+<td><p>If <code>true</code>, will call <code>fail_json</code> if command returns a nonzero value</p></td>
+</tr>
+<tr>
+<td><p>close_fds</p></td>
+<td><p>Boolean</p></td>
+<td><p>True</p></td>
+<td><p>Passes as <code>close_fds</code> argument to <code>subprocess.Popen</code></p></td>
+</tr>
+<tr>
+<td><p>executable</p></td>
+<td><p>String (path to program)</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>Passes as <code>executable</code> argument to <code>subprocess.Popen</code></p></td>
+</tr>
+<tr>
+<td><p>data</p></td>
+<td><p>String</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>Send to <code>stdin</code> if child process</p></td>
+</tr>
+<tr>
+<td><p>binary_data</p></td>
+<td><p>Boolean</p></td>
+<td><p>False</p></td>
+<td><p>If <code>false</code> and <code>data</code> is present, Ansible will send a newline to <code>stdin</code> after sending <code>data</code></p></td>
+</tr>
+<tr>
+<td><p>path_prefix</p></td>
+<td><p>String (list of paths)</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>Colon-delimited list of paths to prepend to <code>PATH</code> environment variable</p></td>
+</tr>
+<tr>
+<td><p>cwd</p></td>
+<td><p>String (directory path)</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>If specified, Ansible will change to this directory before executing</p></td>
+</tr>
+<tr>
+<td><p>use_unsafe_shell</p></td>
+<td><p>Boolean</p></td>
+<td><p>False</p></td>
+<td><p>See the following section</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>If <code>args</code> is passed as a list, as shown in <a data-type="xref" href="#ARGS_AS_LIST"/>, then<a data-type="indexterm" data-primary="args variable" data-secondary="passed as list"/><a data-type="indexterm" data-primary="subprocess.Popen"/> Ansible will invoke <span class="keep-together"><code>subprocess.Popen</code></span> with <code>shell=False</code>.</p>
+<div id="ARGS_AS_LIST" data-type="example">
+<h5>Passing args as a list</h5>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(...)
+...
+module.run_command(['/usr/local/bin/myprog', '-i', 'myarg'])</pre></div>
+
+<p>If <code>args</code> is passed as a string, as shown in <a data-type="xref" href="#ARGS_AS_STRING"/>, then the behavior depends <a data-type="indexterm" data-primary="args variable" data-secondary="passed as string"/>on the value of <code>use_unsafe_shell</code>.<a data-type="indexterm" data-primary="Python" data-secondary="subprocess.Popen class"/><a data-type="indexterm" data-primary="use_unsafe_shell"/> If <code>use_unsafe_shell</code> is <code>false</code>, Ansible will split <code>args</code> into a list and invoke <code>subprocess.Popen</code> with <code>shell=False</code>. If <code>use_unsafe_shell</code> is <code>true</code>, Ansible will pass <code>args</code> as a string to <code>subprocess.Popen</code> with <code>shell=True</code>.<span data-type="footnote">For more on the Python standard library <code>subprocess.Popen</code> class, see its <a href="http://bit.ly/1F72tiU">online documentation</a>.</span></p>
+<div id="ARGS_AS_STRING" data-type="example">
+<h5>Passing args as a string</h5>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(...)
+...
+module.run_command('/usr/local/bin/myprog -i myarg')</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Check Mode (Dry Run)</h2>
+
+<p>Ansible supports something called <em>check mode</em>, which is enabled when passing the <code>-C</code> or <code>--check</code> flag to <code>ansible-playbook</code>. <a data-type="indexterm" data-primary="check mode"/><a data-type="indexterm" data-primary="dry run mode"/><a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-tertiary="check mode"/>It is similar to the <em>dry run</em> mode supported by many other tools.<a data-type="indexterm" data-primary="ansible-playbook -C or --check command"/></p>
+
+<p>When Ansible runs a playbook in check mode, it will not make any changes to the hosts when it runs. Instead, it will simply report whether each task would have changed the host, returned successfully without making a change, or returned an error.</p>
+<div data-type="tip">
+<p>Modules must be explicitly configured to support check mode. If you&#8217;re going to
+write your own module, I recommend you support check mode so that your module is
+a good Ansible citizen.</p>
+</div>
+
+<p>To tell Ansible that your module supports <a data-type="indexterm" data-primary="supports_check_mode"/><a data-type="indexterm" data-primary="initializer method (AnsibleModule), parameters" data-secondary="supports_check_mode"/>check mode, set <code>supports_check_mode</code>
+to <code>true</code> in the AnsibleModule initializer method, as shown in
+<a data-type="xref" href="#ENABLING_CHECK_MODE"/>.</p>
+<div id="ENABLING_CHECK_MODE" data-type="example">
+<h5>Telling Ansible the module supports check mode</h5>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(
+    argument_spec=dict(...),
+    supports_check_mode=True)</pre></div>
+
+<p>Your module should check that check mode has been enabled by checking the value of the <code>check_mode</code><span data-type="footnote">Phew! That was a lot of checks.</span> attribute of the <code>AnsibleModule</code> object, as shown in <a data-type="xref" href="#CHECKING_CHECK_MODE"/>. Call the <code>exit_json</code> or <code>fail_json</code> methods as you would normally.</p>
+<div id="CHECKING_CHECK_MODE" data-type="example">
+<h5>Checking whether check mode is enabled</h5>
+
+<pre data-type="programlisting" data-code-language="python">module = AnsibleModule(...)
+...
+if module.check_mode:
+   # check if this module would make any changes
+   would_change = would_executing_this_module_change_something()
+   module.exit_json(changed=would_change)</pre></div>
+
+<p>It is up to you, the module author, to ensure that your module does not modify
+the state of the host when running in check mode.<a data-type="indexterm" data-primary="Python" data-secondary="implementing custom modules in" data-startref="ix_Pycusmod"/><a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Python" data-startref="ix_cusmodPy"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Documenting Your Module</h1>
+
+<p>You should document your modules according to the Ansible project standards so
+that HTML documentation for your module will be correctly generated and the
+<em>ansible-doc</em> program will display documentation for your module.<a data-type="indexterm" data-primary="ansible-doc command-line tool"/> Ansible
+uses a special YAML-based syntax for documenting modules.<a data-type="indexterm" id="ix_doccusmod" data-primary="documentation" data-secondary="for custom modules"/><a data-type="indexterm" id="ix_cusmoddoc" data-primary="custom modules" data-secondary="documenting"/></p>
+
+<p>Near the top of your module, define a string variable called <code>DOCUMENTATION</code> that
+contains the documentation, and a string variable called <code>EXAMPLES</code> that
+contains example usage.</p>
+
+<p><a data-type="xref" href="#ex-10-8"/> shows an example for the documentation section for our <code>can_reach</code> module.</p>
+<div id="ex-10-8" data-type="example">
+<h5>Example of module documentation</h5>
+
+<pre data-type="programlisting" data-code-language="python">DOCUMENTATION = '''
+---
+module: can_reach
+short_description: Checks server reachability
+description:
+ - Checks if a remote server can be reached
+version_added: "1.8"
+options:
+  host:
+    description:
+      - A DNS hostname or IP address
+    required: true
+  port:
+    description:
+    - The TCP port number
+    required: true
+  timeout:
+    description:
+    - The amount of time trying to connect before giving up, in seconds
+    required: false
+    default: 3
+  flavor:
+    description:
+    - This is a made-up option to show how to specify choices.
+    required: false
+    choices: ["chocolate", "vanilla", "strawberry"]
+    aliases: ["flavor"]
+    default: chocolate
+requirements: [netcat]
+author: Lorin Hochstein
+notes:
+  - This is just an example to demonstrate how to write a module.
+  - You probably want to use the native M(wait_for) module instead.
+'''
+
+EXAMPLES = '''
+# Check that ssh is running, with the default timeout
+- can_reach: host=myhost.example.com port=22
+
+# Check if postgres is running, with a timeout
+- can_reach: host=db.example.com port=5432 timeout=1
+'''</pre></div>
+
+<p>Ansible supports <a data-type="indexterm" data-primary="ansible-doc command-line tool" data-secondary="documentation markup"/>limited markup in the documentation. <a data-type="xref" href="#DOC_MARKUP"/> shows
+the markup syntax supported by the Ansible documentation tool, with
+recommendations about when you should use this markup.</p>
+<table id="DOC_MARKUP">
+<caption>Documentation markup</caption>
+<thead>
+<tr>
+<th>Type</th>
+<th>Syntax with example</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>URL</p></td>
+<td><p>U(<em>http://www.example.com</em>)</p></td>
+<td><p>URLs</p></td>
+</tr>
+<tr>
+<td><p>Module</p></td>
+<td><p>M(apt)</p></td>
+<td><p>Module names</p></td>
+</tr>
+<tr>
+<td><p>Italics</p></td>
+<td><p>I(port)</p></td>
+<td><p>Parameter names</p></td>
+</tr>
+<tr>
+<td><p>Constant-width</p></td>
+<td><p>C(/bin/bash)</p></td>
+<td><p>File and option names</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>The existing Ansible modules are a great source of examples for documentation.<a data-type="indexterm" data-primary="documentation" data-secondary="for custom modules" data-startref="ix_doccusmod"/><a data-type="indexterm" data-primary="custom modules" data-secondary="documenting" data-startref="ix_cusmoddoc"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Debugging Your Module</h1>
+
+<p>The Ansible repository in GitHub contains a couple of scripts that allow you to
+invoke your module directly on your local machine, without having to run it
+by using the <code>ansible</code> or <code>ansible-playbook</code> commands.<a data-type="indexterm" data-primary="custom modules" data-secondary="debugging"/><a data-type="indexterm" data-primary="debugging" data-secondary="custom modules"/></p>
+
+<p>Clone the Ansible repo:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ git clone https://github.com/ansible/ansible.git --recursive</pre>
+
+<p>Set up your environment variables so that you can invoke the module:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ source ansible/hacking/env-setup</pre>
+
+<p>Invoke your module:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible/hacking/test-module -m /path/to/can_reach -a "host=example.com port=81"</pre>
+<div data-type="note">
+<p>You might get an import error, such as these:</p>
+
+<pre data-type="programlisting">ImportError: No module named yaml
+ImportError: No module named jinja2.exceptions</pre>
+
+<p>If so, you&#8217;ll need to install these missing dependencies:</p>
+
+<pre data-type="programlisting">pip install pyYAML jinja2</pre>
+</div>
+
+<p>Since <code>example.com</code> doesn&#8217;t have a service that listens on port 81, our module should fail with a meaningful error message. And it does:</p>
+
+<pre data-type="programlisting">* including generated source, if any, saving to:
+/Users/lorin/.ansible_module_generated
+* ansiballz module detected; extracted module source to:
+/Users/lorin/debug_dir
+***********************************
+RAW OUTPUT
+
+{"msg": "Could not reach example.com:81", "failed": true, "invocation":
+{"module_args": {"host": "example.com", "port": 81, "timeout": 3}}}
+
+
+***********************************
+PARSED OUTPUT
+{
+    "failed": true,
+    "invocation": {
+        "module_args": {
+            "host": "example.com",
+            "port": 81,
+            "timeout": 3
+        }
+    },
+    "msg": "Could not reach example.com:81"
+}</pre>
+
+<p>As the output suggests, when you run this <code>test-module</code>, Ansible will generate a
+Python script and copy it to <em>~/.ansible_module_generated</em>. This is a standalone
+Python script that you can execute directly if you like.</p>
+
+<p>Starting with Ansible 2.1.0, this Python script contains a base64-encoded
+ZIP file with the actual source code from your module, as well as code to expand
+the ZIP file and execute the source code within it.</p>
+
+<p>This file does not take any arguments; rather, Ansible inserts the arguments directly<a data-type="indexterm" data-primary="ANSIBALLZ_PARAMS environment variable"/>
+into the file in the <code>ANSIBALLZ_PARAMS</code> variable:</p>
+
+<pre data-type="programlisting">ANSIBALLZ_PARAMS = '{"ANSIBLE_MODULE_ARGS": {"host": "example.com", \
+    "_ansible_selinux_special_fs": ["fuse", "nfs", "vboxsf", "ramfs"], \
+    "port": "81"}}'</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Implementing the Module in Bash</h1>
+
+<p>If you&#8217;re going to write an Ansible module, I recommend writing it in Python because, as you saw earlier in this chapter, Ansible provides helper classes for writing your modules in Python.<a data-type="indexterm" data-primary="custom modules" data-secondary="implementing in Bash"/><a data-type="indexterm" data-primary="Bash shell" data-secondary="implementing custom module in"/> However, you can write modules in other languages as well. Perhaps you need to write in another language because your module depends on a third-party library that&#8217;s not implemented in Python. Or maybe the module is so simple that it&#8217;s easiest to write it in Bash. Or maybe you just prefer writing your scripts in Ruby.</p>
+
+<p>In this section, we&#8217;ll work through an example of implementing the module as a Bash script. It&#8217;s going to look quite similar to the implementation in <a data-type="xref" href="#CAN_REACH"/>. The main difference is parsing the input arguments and generating the outputs that Ansible expects.</p>
+
+<p>I&#8217;m going to use the JSON format for input and use a tool called <a href="http://stedolan.github.io/jq/">jq</a> for parsing out JSON on the command line.<a data-type="indexterm" data-primary="JSON" data-secondary="input format for custom module implemented in Bash"/><a data-type="indexterm" data-primary="jq tool"/> This means that you&#8217;ll need to install jq on the host before invoking this module. <a data-type="xref" href="#BASH_MODULE"/> shows the complete Bash implementation of our module.</p>
+<div id="BASH_MODULE" data-type="example">
+<h5>can_reach module in Bash</h5>
+
+<pre data-type="programlisting" data-code-language="bash">#!/bin/bash
+# WANT_JSON
+
+# Read the variables from the file
+host=`jq -r .host &lt; $1`
+port=`jq -r .port &lt; $1`
+timeout=`jq -r .timeout &lt; $1`
+
+# Default timeout=3
+if [[ $timeout = null ]]; then
+    timeout=3
+fi
+
+# Check if we can reach the host
+nc -z -w $timeout $host $port
+
+# Output based on success or failure
+if [ $? -eq 0 ]; then
+    echo '{"changed": false}'
+else
+    echo "{\"failed\": true, \"msg\": \"could not reach $host:$port\"}"
+fi</pre></div>
+
+<p>We added <code>WANT_JSON</code> in a comment to tell Ansible that we want the input to be in JSON
+syntax.</p>
+<aside data-type="sidebar">
+<h5>Bash Modules with Shorthand Input</h5>
+<p>It&#8217;s possible to implement Bash modules by using the shorthand notation for input. I don&#8217;t recommend doing it this way, since the simplest approach involves using the <code>source</code> built-in, which is a potential security risk. However, if you&#8217;re really determined, check out the blog post <a href="http://bit.ly/1F789tb">"Shell scripts as Ansible modules"</a> by Jan-Piet Mens.</p>
+</aside>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Specifying an Alternative Location for Bash</h1>
+
+<p>Note that our module assumes that Bash is located at <em>/bin/bash</em>. However, not all systems will have the Bash executable in that location.<a data-type="indexterm" data-primary="Bash shell" data-secondary="specifying alternate location for"/><a data-type="indexterm" data-primary="/bin/bash directory" data-primary-sortas="bin/bash"/> You can tell Ansible to look <span class="keep-together">elsewhere</span> for the Bash interpreter by setting the <code>ansible_bash_interpreter</code> variable on hosts that install it elsewhere.<a data-type="indexterm" data-primary="ansible_bash_interpreter variable"/></p>
+
+<p>For example, let&#8217;s say you have a FreeBSD host named <em>fileserver.example.com</em> that has <a data-type="indexterm" data-primary="FreeBSD platforms, Bash on"/>Bash installed in <em>/usr/local/bin/bash</em>. You can create a host variable by creating the file <em>host_vars/fileserver.example.com</em> that contains the following:</p>
+
+<pre data-type="programlisting">ansible_bash_interpreter: /usr/local/bin/bash</pre>
+
+<p>Then, when Ansible invokes this module on the FreeBSD host, it will use
+<em>/usr/local/bin/bash</em> instead of <em>/bin/bash</em>.<a data-type="indexterm" data-primary="#! (shebang), lines beginning with"/></p>
+
+<p>Ansible determines which interpreter to use by looking for the <em>shebang</em> (<code>
+!</code>) and then looking at the base name of the first element. <a data-type="indexterm" data-primary="shebang (!)"/>In our example, Ansible will see this line:</p>
+
+<pre data-type="programlisting">#!/bin/bash</pre>
+
+<p>Ansible will then look for the base name of <em>/bin/bash</em>, which is <em>bash</em>. It will then use the <code>ansible_bash_interpreter</code> if the user specified one.</p>
+<div data-type="warning">
+<p>Because of how Ansible looks for the interpreter, if your shebang calls
+<em>/usr/bin/env</em>, for example:</p>
+
+<pre data-type="programlisting">#!/usr/bin/env bash</pre>
+
+<p>Ansible will mistakenly identify the interpreter as <code>env</code> because it
+will call <code>basename</code> on <em>/usr/bin/env</em> to identify the interpreter.</p>
+
+<p>The takeaway is: don&#8217;t invoke <code>env</code> in shebang. <a data-type="indexterm" data-primary="env lookup" data-secondary="not invoking in shebang"/>Instead, explicitly specify the location of the interpreter and override with <code>ansible_bash_interpreter</code> (or equivalent) when needed.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Example Modules</h1>
+
+<p>The best way to learn how to write Ansible modules is to read the source code for the modules that ship with Ansible.<a data-type="indexterm" data-primary="modules" data-secondary="source code for modules that ship with Ansible"/><a data-type="indexterm" data-primary="custom modules" data-secondary="studying source code for modules shipping with Ansible"/> Check them out on <a href="https://github.com/ansible/ansible/tree/devel/lib/ansible/modules">GitHub</a>.</p>
+
+<p>In this chapter, we covered how to write modules in Python, as well as other languages, and how to avoid writing your own full-blown modules by using the <code>script</code> module. If you do write a module, I encourage you to propose it for inclusion in the main Ansible project.<a data-type="indexterm" data-primary="modules" data-secondary="custom" data-startref="ix_modcus"/><a data-type="indexterm" data-primary="custom modules" data-startref="ix_cusmod"/></p>
+</section>
+
+
+
+
+
+
+
+</section>

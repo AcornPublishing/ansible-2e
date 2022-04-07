@@ -1,0 +1,427 @@
+=== Ansible Container
+
+Coinciding with the release of Ansible 2.1, the Ansible project released
+a new tool called _Ansible Container_ to simplify working with Docker images
+and containers.((("Docker", "Ansible Container", id="ix_DockAC"))) We cover Ansible Container 0.9, which coincided with the release
+of Ansible 2.3.((("Ansible Container", id="ix_AnsCont")))
+
+Ansible Container does quite a few things. In particular, you
+can use it to do the pass:[<span class="keep-together">following</span>]:
+
+* Create new images (replaces Dockerfiles)
+* Publish Docker images to registries (replaces +docker push+)
+* Run Docker containers in development mode (replaces Docker Compose)
+* Deploy to a production cloud (alternative to Docker Swarm)
+
+
+As of this writing, Ansible Container supports deploying to Kubernetes and
+OpenShift, although this list is likely to grow.((("Kubernetes")))((("OpenShift"))) If you don't run on one of
+these environments, don't worry: you can write a playbook by using the +docker_container+ module
+(described later in this chapter) to pull down and start your containers on
+whatever production environment you like.
+
+==== The Conductor
+
+Ansible Container enables you to configure Docker images by using Ansible roles
+instead of Dockerfiles.((("Ansible Container", "Conductor"))) When using Ansible to configure hosts, Python must be
+installed on the host. However, this requirement is generally considered
+undesirable for Docker containers because users typically want minimal
+containers; users don't want to have Python installed in a container if
+that container won't actually need Python.
+
+Ansible Container eliminates the need to have Python installed inside the
+container((("Conductor"))) by using a special container called the _Conductor_, and taking
+advantage of Docker's ability to mount volumes from one container to another.
+
+When you run Ansible Container, it creates a local directory named
+_ansible-deployment_, copies all the files that the Conductor
+needs,  and mounts the directory from your local machine into the Conductor.
+
+Ansible Container mounts directories containing the Python runtime and any
+needed library dependencies ((("Python", "Ansible Container mounting runtime to containers being configured")))from the Conductor container into the containers
+that are being configured. It does this by mounting _/usr_ from the Conductor container
+instance to pass:[<span class="keep-together"><em>/_usr</em></span>] inside the container being configured, and configures Ansible to use the Python interpreter under pass:[<span class="keep-together"><em>/_usr</em></span>].
+For this to work properly, the Linux distribution of the Docker container you
+use for the Conductor should match the Linux distribution of the base image of
+the Docker containers that you are configuring.
+
+If your Conductor base image is an official image from one of the supported Linux
+distributions, Ansible Container will automatically add some required
+packages to the container.  As of 0.9.0, the supported distributions are
+Fedora, CentOS, Debian, Ubuntu, and Alpine. You can use an unsupported base image,
+but you must ensure that it has the required packages installed.
+
+See the _container/docker/templates/conductor-dockerfile.j2_ file in the https://github.com/ansible/ansible-container[Ansible
+Container GitHub repository] for
+information on which packages are installed into the Conductor image.
+
+If you don't want Ansible Container to mount the runtime from the Conductor into the container
+being configured, you can disable this behavior by passing the
++--use-local-python+ flag to the +ansible-container+ command. Ansible Container will then use the native Python interpreter of the container image
+being configured.((("ansible-container --use-local-python command")))
+
+
+==== Creating Docker Images
+
+Let's use Ansible Container to build that simple Nginx image from <<Dockerfile>>.((("Docker", "Ansible Container", "creating Docker images", id="ix_DockACimg")))((("Ansible Container", "creating Docker images", id="ix_AnsContimg")))
+
+===== Creating the initial files
+
+The first thing we must do is run ((("ansible-container init command")))the initialize command:
+
+----
+$ ansible-container init
+----
+
+This command creates a set of files in the current directory:
+
+----
+.
+├── ansible-requirements.txt
+├── ansible.cfg
+├── container.yml
+├── meta.yml
+└── requirements.yml
+----
+
+===== Creating the roles
+
+Next, we need a role that will configure our container.((("Ansible Container", "creating Docker images", "creating roles")))((("roles", "ghost-nginx, creating for Dockerized application"))) We'll call our role
+`ghost-nginx`, since it configures an Nginx image for fronting Ghost.
+
+This role will be very simple; it just needs the _ghost.conf_ configuration file
+from <<ghost.conf>> and a task file that implements the functionality of
+<<Dockerfile>>. Here's the directory structure for the role:
+
+[role="pagebreak-before"]
+----
+.
+└── roles
+    └── ghost-nginx
+        ├── files
+        │   └── ghost.conf
+        └── tasks
+            └── main.yml
+----
+
+Here's the _tasks/main.yml_ file:
+
+----
+---
+- name: remove default config
+  file:
+    path: /etc/nginx/conf.d/default.conf
+    state: absent
+- name: add ghost config
+  copy:
+    src: ghost.conf
+    dest: /etc/nginx/conf.d/ghost.conf
+----
+
+
+===== Configuring container.yml
+
+
+Next, we'll configure _container.yml_ to use our role to build the container, as shown in <<container.yml>>. This
+file is similar to a Docker Compose file, with additional fields that are
+Ansible-specific, and support for Jinja2-style variable substitution and filters.((("containers", "configuring container.yml for Ansible Container")))
+
+[[container.yml]]
+.container.yml
+====
+----
+version: "2" <1>
+settings:
+  conductor_base: debian:jessie <2>
+services: <3>
+  ac-nginx: <4>
+    from: nginx <5>
+    command: [nginx, -g, daemon off;] <6>
+    roles:
+      - ghost-nginx <7>
+registries: {} <8>
+----
+====
+
+<1> This tells Ansible Container to support Docker Compose version 2 schemas.
+The default is version 1, but you probably always want version 2.
+<2> We are using `debian:jessie` as the base image for our Conductor container,
+because we will be customizing the official Nginx image, which uses
+`debian:jessie` as its base image.
+<3> The +services+ field is a map whose keys are the names of the containers we
+are going to create. In this example, there is only a single container.
+<4> We call the container we are going to create `ac-nginx` for _Ansible Conductor Nginx_.
+<5> We specify `nginx` as the base image.
+<6> We need to specify the command that will be run when the container starts up.
+<7> We specify the roles to be used to configure this image. For this case,
+there's only one role, `ghost-nginx`.
+<8> The +registries+ field is used to specify the external registries we will
+push our containers to. We haven't configured this yet, so it's blank.
+
+[WARNING]
+====
+Ansible Container does not automatically pull base images to your local
+machine.((("Nginx", "pulling base Nginx image for ac-nginx container"))) You must do that yourself before building the containers. For example,
+before you run <<container.yml>>, you would need to pull the +nginx+ base image
+that is required to build pass:[<span class="keep-together"><code>ac-nginx</code></span>]:
+
+----
+$ docker pull nginx
+----
+====
+
+
+===== Building the containers
+
+Finally, we're((("Ansible Container", "creating Docker images", "building containers")))((("ansible-container build command")))((("containers", "building in Ansible Container"))) ready to build:
+
+----
+$ ansible-container build
+----
+
+The output should look like this:
+
+----
+Building Docker Engine context...
+Starting Docker build of Ansible Container Conductor image (please be patient)...
+Parsing conductor CLI args.
+Docker™ daemon integration engine loaded. Build starting.	project=ans-con
+Building service...	project=ans-con service=ac-nginx
+
+PLAY [ac-nginx] ****************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [ac-nginx]
+
+TASK [ghost-nginx : remove default config] *************************************
+changed: [ac-nginx]
+
+TASK [ghost-nginx : add ghost config] ******************************************
+changed: [ac-nginx]
+
+PLAY RECAP *********************************************************************
+ac-nginx                   : ok=3    changed=2    unreachable=0    failed=0
+
+Applied role to service	role=ghost-nginx service=ac-nginx
+Committed layer as image    image=sha256:5eb75981fc5117b3fca3207b194f3fa6c9ccb85
+7718f91d674ec53d86323ffe3 service=ac-nginx
+Build complete.	service=ac-nginx
+All images successfully built.
+Conductor terminated. Cleaning up.  command_rc=0 conductor_id=8c68ca4720beae5d9c
+7ca10ed70a3c08b207cd3f68868b3670dcc853abf9b62b save_container=False
+----
+
+
+Ansible Container uses a +{project}-{service}+ convention for naming Docker
+images; the project name is determined by the directory where you run
++ansible-container init+. 
+In my case, the directory is named _ans-con_, so the image that will be created
+will be named _ans-con-ac-nginx_.
+
+Ansible will also always create a conductor image, named +{project}-conductor+.
+
+If you don't want Ansible Container to use the directory name as the project
+name, you can specify a custom project name by passing the +--project-name+ flag.
+
+If we run the following:
+
+----
+$ docker images
+----
+
+we'll see the following new container images:
+
+----
+REPOSITORY         TAG            IMAGE ID      CREATED        SIZE
+ans-con-ac-nginx   20170424035545 5eb75981fc51  2 minutes ago  182 MB
+ans-con-ac-nginx   latest         5eb75981fc51  2 minutes ago  182 MB
+ans-con-conductor  latest         742cf2e046a3  2 minutes ago  622 MB
+----
+
+===== Troubleshooting builds
+
+If the build command fails with an error, you can learn more by viewing the logs
+generated by the Conductor container.((("Ansible Container", "creating Docker images", "troubleshooting builds")))((("containers", "building in Ansible Container", "troubleshooting builds"))) There are two ways to see the log.
+
+One way is to use the +--debug+ flag when invoking +ansible-container+.
+
+If you don't want to rerun with the +--debug+ flag, you can get the log output from Docker. To
+get it, you need to get the ID of the Conductor container. Because the
+container will no longer be running, use the +ps -a+ Docker command to find the
+ID of the exited container:
+
+----
+$ docker ps -a
+CONTAINER ID  IMAGE         COMMAND                  CREATED         STATUS
+78e78b9a1863  0c238eaf1819  "/bin/sh -c 'cd /_..."   21 minutes ago  Exited (1)
+----
+
+Once you have the ID, you can view the log output like this:
+
+----
+$ docker logs 78e78b9a1863
+----
+
+==== Running Locally
+
+Ansible Container allows you to run multiple containers locally, just like
+Docker Compose.((("Docker", "Ansible Container", "creating Docker images", startref="ix_DockACimg")))((("Ansible Container", "creating Docker images", startref="ix_AnsContimg"))) The _container.yml_ file is similar to the format
+of _docker-compose.yml_. We'll extend our _container.yml_ so that it behaves
+the same way as <<docker-compose.yml>>.((("Docker", "Ansible Container", "running locally", id="ix_DockACloc")))((("Ansible Container", "running locally", id="ix_AnsContlocal"))) This is shown in
+<<container.yml-local>>.
+
+[[container.yml-local]]
+.container.yml, configured for local execution
+====
+----
+version: "2"
+settings:
+  conductor_base: debian:jessie
+services:
+  ac-nginx:
+    from: nginx
+    command: [nginx, -g, daemon off;]
+    roles:
+      - ghost-nginx
+    ports:
+      - "8443:443"
+      - "8000:80"
+    dev_overrides:  <1>
+      volumes:
+        - $PWD/certs:/certs
+      links:
+        - ghost
+  ghost: <2>
+    from: ghost
+    dev_overrides:
+      volumes:
+        - $PWD/ghostdata:/var/lib/ghost
+registries: {}
+----
+====
+
+Note the changes from <<container.yml>> to <<container.yml-local>>:
+
+<1> We've added a +dev_overrides+ section to the +ac-nginx+ service that
+contains data that is specific for running locally (i.e., not used for creating
+images or for deploying to production). For this service, that involves
+mounting the TLS certificates from the local filesystem and linking the
+container to the +ghost+ container.
+
+<2> We've added a +ghost+ service that contains the Ghost app. We didn't need
+this previously because we aren't creating a custom Ghost container; we're just
+running the official one unmodified.
+
+Note that while the syntax is similar to Docker Compose, it isn't identical.
+For example, Ansible Container uses +from+, whereas Docker Compose uses +image+,
+and Docker Compose does not have a +dev_overrides+ section.
+
+You can start the containers on your local machine by doing this:
+
+----
+$ ansible-container run
+----
+
+[role="pagebreak-before"]
+You can stop them as follows:
+
+----
+$ ansible-container stop
+----
+
+If you want to stop all containers and delete all images that you've created, use the following:
+
+----
+$ ansible-container destroy
+----
+
+==== Publishing Images to Registries
+
+Once you are satisfied with your images, you'll want to publish them to a
+registry so that you can deploy them.((("Docker", "Ansible Container", "running locally", startref="ix_DockACloc")))((("Ansible Container", "running locally", startref="ix_AnsContlocal")))((("images (Docker)", "publishing to registries using Ansible Container")))((("Ansible Container", "publishing images to registries")))((("Docker", "Ansible Container", "publishing images to registries"))) 
+
+You'll need to configure the registries section of <<container.yml>> to specify a
+registry. For example, <<registries>> shows how to configure
+_container.yml_ to push images to the _ansiblebook_ organization in the Docker
+registry.
+
+.registries section of container.yml
+[[registries]]
+====
+----
+registries:
+  docker:
+    url: https://index.docker.io/v1/
+    namespace: ansiblebook
+----
+====
+
+===== Authenticating
+
+The first time you push your image, you need to pass your username as a
+command-line((("Ansible Container", "publishing images to registries", "authenticating"))) argument:
+
+----
+$ ansible-container push --username $YOUR_USERNAME
+----
+
+You'll be prompted to enter your password.  The first time you push an image, Ansible Container stores your credentials
+in _~/.docker/config.json_, and on subsequent pushes you don't need to specify
+a username or password anymore.
+
+The output looks like this:
+
+----
+Parsing conductor CLI args.
+Engine integration loaded. Preparing push.	engine=Docker™ daemon
+Tagging ansiblebook/ans-con-ac-nginx
+Pushing ansiblebook/ans-con-ac-nginx:20170430055647...
+The push refers to a repository [docker.io/ansiblebook/ans-con-ac-nginx]
+Preparing
+Pushing
+Mounted from library/nginx
+Pushed
+20170430055647: digest: sha256:50507495a9538e9865fe3038d56793a1620b9b372482667a
+Conductor terminated. Cleaning up.  command_rc=0 conductor_id=1d4cfa04a055c1040
+----
+
+
+===== Multiple registries
+
+Ansible Container allows you to specify multiple registries.((("Ansible Container", "publishing images to registries", "multiple registries")))((("registry (Docker images)", "publishing images to multiple registries"))) For example, here
+is a +registries+ section that has two registries, Docker Hub and Quay:
+
+----
+registries:
+  docker:
+    namespace: ansiblebook
+    url: https://index.docker.io/v1/
+  quay:
+    namespace: ansiblebook
+    url: https://quay.io
+----
+
+To push images to only one of the registries, use the +--push-to+ flag. For
+example, this pushes to the Quay registry:
+
+----
+$ ansible-container push --push-to quay
+----
+
+
+==== Deploying Containers to Production
+
+Although we don't cover it here, Ansible Container also has support for
+deploying your containers to a production environment, using the
++ansible-container deploy+ command. ((("Ansible Container", "deploying containers to production")))((("Docker", "Ansible Container", "deploying containers to production")))As of this writing, Ansible Container
+has support for deploying to two container management platforms:
+OpenShift and Kubernetes. 
+
+If you are looking for an Ansible Container-supported public cloud for running your containers,((("cloud", "Ansible Container-supported public clouds"))) Red Hat
+operates an OpenShift-based cloud platform called OpenShift Online, and Google
+provides Kubernetes as part of its Google Compute Engine cloud platform.((("Kubernetes")))((("OpenShift"))) Both
+platforms are also open source, so if you manage your own hardware, you can
+deploy either OpenShift or Kubernetes on them for free. If you want to deploy on another platform (e.g.,
+EC2 Container Service or Azure Container Service), you won't be able to
+use Ansible Container for the deployment.((("Docker", "Ansible Container", startref="ix_DockAC")))((("Ansible Container", startref="ix_AnsCont")))
+

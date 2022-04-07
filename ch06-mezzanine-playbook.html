@@ -1,0 +1,1762 @@
+<section data-type="chapter" id="deploying_mezzanine">
+<h1>Deploying Mezzanine with Ansible</h1>
+
+
+<p>It&#8217;s time to write an Ansible playbook to
+deploy Mezzanine to a server.<a data-type="indexterm" id="ix_Mezdep" data-primary="Mezzanine" data-secondary="deploying with Ansible"/> We&#8217;ll go through it step by step, but if you&#8217;re the type of person who starts off by reading the last page of a book to see how it ends,<span data-type="footnote">My wife, Stacy, is notorious for doing this.</span> you can find the full playbook at the end of this chapter as <a data-type="xref" href="#full_mezzanine_playbook"/>. It&#8217;s also available on <a href="http://bit.ly/19P0OAj">GitHub</a>.  Check out the <a href="http://bit.ly/1Onko4u">README file</a> before trying to run it directly.<a data-type="indexterm" data-primary="GitHub repositories" data-secondary="full Mezzanine playbook"/></p>
+
+<p>I&#8217;ve tried to hew as closely as possible to the <a data-type="indexterm" data-primary="Fabric deployment scripts"/>original
+Fabric scripts that Mezzanine author Stephen McDonald wrote.<span data-type="footnote">You can find the Fabric scripts that ship with Mezzanine on <a href="http://bit.ly/19P0T73">GitHub</a>.</span></p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Listing Tasks in a Playbook</h1>
+
+<p>Before we dive into the guts of our playbook, let&#8217;s get a high-level view.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="listing tasks in a playbook"/> The <code>ansible-playbook</code> command-line tool supports a flag called <code>--list-tasks</code>.<a data-type="indexterm" data-primary="ansible-playbook --list-tasks command"/><a data-type="indexterm" data-primary="tasks" data-secondary="listing in a playbook"/> This flag prints out the names of all the tasks in a playbook. It&#8217;s a handy way to summarize what a playbook is going to do. Here&#8217;s how you use it:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook --list-tasks mezzanine.yml</pre>
+
+<p><a data-type="xref" href="#mezzanine_task_list"/> shows the output for the <em>mezzanine.yml</em> playbook in <a data-type="xref" href="#full_mezzanine_playbook"/>.</p>
+<div id="mezzanine_task_list" data-type="example" class="pagebreak-before less_space">
+<h5>List of tasks in Mezzanine playbook</h5>
+
+<pre data-type="programlisting">playbook: mezzanine.yml
+
+  play #1 (web): Deploy mezzanine	TAGS: []
+    tasks:
+      install apt packages	TAGS: []
+      create project path	TAGS: []
+      create a logs directory	TAGS: []
+      check out the repository on the host	TAGS: []
+      install Python requirements globally via pip	TAGS: []
+      create project locale	TAGS: []
+      create a DB user	TAGS: []
+      create the database	TAGS: []
+      ensure config path exists	TAGS: []
+      create tls certificates	TAGS: []
+      remove the default nginx config file	TAGS: []
+      set the nginx config file	TAGS: []
+      enable the nginx config file	TAGS: []
+      set the supervisor config file	TAGS: []
+      install poll twitter cron job	TAGS: []
+      set the gunicorn config file	TAGS: []
+      generate the settings file	TAGS: []
+      install requirements.txt	TAGS: []
+      install required python packages	TAGS: []
+      apply migrations to create the database, collect static content	TAGS: []
+      set the site id	TAGS: []
+      set the admin password	TAGS: []</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Organization of Deployed Files</h1>
+
+<p>As we discussed earlier, Mezzanine is built atop Django.<a data-type="indexterm" data-primary="Django" data-secondary="Mezzanine and"/> In Django,
+a web app is called a <em>project</em>.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="organization of deployed files"/><a data-type="indexterm" data-primary="web applications (projects in Django)"/><a data-type="indexterm" data-primary="projects" data-secondary="in Django"/> We get to choose what to name our project, and
+I&#8217;ve chosen to name it <em>mezzanine_example</em>.</p>
+
+<p>Our playbook deploys into a Vagrant machine, and will deploy the files into the home directory of the Vagrant user&#8217;s account.<a data-type="indexterm" data-primary="Vagrant" data-secondary="deploying Mezzanine example app to"/></p>
+
+<p><a data-type="xref" href="#mezzanine_dirs"/> shows the relevant directories underneath <em>/home/vagrant</em>:</p>
+
+<ul>
+<li>
+<p><em>/home/vagrant/mezzanine/mezzanine-example</em> will contain the source code that
+will be cloned from a source code repository on GitHub.</p>
+</li>
+<li>
+<p><em>/home/vagrant/.virtualenvs/mezzanine_example</em> is the virtualenv directory,
+which means that we&#8217;re going to install all of the Python packages into that directory.</p>
+</li>
+<li>
+<p><em>/home/vagrant/logs</em> will contain log files generated by Mezzanine.</p>
+</li>
+</ul>
+<div id="mezzanine_dirs" data-type="example">
+<h5>Directory structure under /home/vagrant</h5>
+
+<pre data-type="programlisting">.
+├── logs
+├── mezzanine
+│   └── mezzanine_example
+└── .virtualenvs
+    └── mezzanine_example</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Variables and Secret Variables</h1>
+
+<p>As you can see in <a data-type="xref" href="#mezzanine_variables"/>, this playbook<a data-type="indexterm" data-primary="variables" data-secondary="and secret variables in example mezzanine playbook"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="variables and secret variables"/> defines quite a few
+variables.</p>
+<div id="mezzanine_variables" data-type="example">
+<h5>Defining the variables</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">  vars:
+    user: "{{ ansible_user }}"
+    proj_app: mezzanine_example
+    proj_name: "{{ proj_app }}"
+    venv_home: "{{ ansible_env.HOME }}/.virtualenvs"
+    venv_path: "{{ venv_home }}/{{ proj_name }}"
+    proj_path: "{{ ansible_env.HOME }}/mezzanine/{{ proj_name }}"
+    settings_path: "{{ proj_path }}/{{ proj_name }}"
+    reqs_path: requirements.txt
+    manage: "{{ python }} {{ proj_path }}/manage.py"
+    live_hostname: 192.168.33.10.xip.io
+    domains:
+      - 192.168.33.10.xip.io
+      - www.192.168.33.10.xip.io
+    repo_url: git@github.com:ansiblebook/mezzanine_example.git
+    locale: en_US.UTF-8
+    # Variables below don't appear in Mezzanine's fabfile.py
+    # but I've added them for convenience
+    conf_path: /etc/nginx/conf
+    tls_enabled: True
+    python: "{{ venv_path }}/bin/python"
+    database_name: "{{ proj_name }}"
+    database_user: "{{ proj_name }}"
+    database_host: localhost
+    database_port: 5432
+    gunicorn_procname: gunicorn_mezzanine
+    num_workers: "multiprocessing.cpu_count() * 2 + 1"
+  vars_files:
+    - secrets.yml</pre></div>
+
+<p>I&#8217;ve tried for the most part to use the same variable names that the Mezzanine
+Fabric script uses. I&#8217;ve also added some extra variables to make things a little
+clearer. For example, the Fabric scripts directly use <code>proj_name</code> as the
+database name and database username. I prefer to define intermediate variables
+named <code>database_name</code> and <code>database_user</code> and define these in terms of
+<code>proj_name</code>.</p>
+
+<p>It&#8217;s worth noting a few things here. First off, we can define one variable in terms of
+another. For example, we define <code>venv_path</code> in terms of <code>venv_home</code> and
+<code>proj_name</code>.</p>
+
+<p>Also, note how we can reference Ansible facts in these variables. <a data-type="indexterm" data-primary="facts" data-secondary="referencing in variables"/>For example, <code>venv_home</code> is defined in terms of the <code>ansible_env</code> fact collected from each host.</p>
+
+<p>Finally, note that we have specified some of our<a data-type="indexterm" data-primary="secret variables"/> variables in a separate file, called <em>secrets.yml</em>, by doing this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">  vars_files:
+    - secrets.yml</pre>
+
+<p>This file contains credentials such as passwords and tokens that need to remain
+private.<a data-type="indexterm" data-primary="credentials" data-secondary="keeping private"/> The repository on GitHub does not actually contain this file.
+Instead, it contains a file called <em>secrets.yml.example</em> that looks like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">db_pass: e79c9761d0b54698a83ff3f93769e309
+admin_pass: 46041386be534591ad24902bf72071B
+secret_key: b495a05c396843b6b47ac944a72c92ed
+nevercache_key: b5d87bb4e17c483093296fa321056bdc
+# You need to create a Twitter application at https://dev.twitter.com
+# in order to get the credentials required for Mezzanine's
+# twitter integration.
+#
+# See http://mezzanine.jupo.org/docs/twitter-integration.html
+# for details on Twitter integration
+twitter_access_token_key: 80b557a3a8d14cb7a2b91d60398fb8ce
+twitter_access_token_secret: 1974cf8419114bdd9d4ea3db7a210d90
+twitter_consumer_key: 1f1c627530b34bb58701ac81ac3fad51
+twitter_consumer_secret: 36515c2b60ee4ffb9d33d972a7ec350a</pre>
+
+<p>To use this repo, you need to copy <em>secrets.yml.example</em> to <em>secrets.yml</em> and edit
+it so that it contains the credentials specific to your site. Also note that
+<em>secrets.yml</em> is included in the <em>.gitignore</em> file in the Git
+repository to prevent someone from accidentally committing these credentials.</p>
+
+<p>It&#8217;s best to avoid committing unencrypted credentials into your version-control repository because of the security risks involved. This is just one
+possible strategy for maintaining secret credentials. We also could have passed
+them as environment variables. Another option, which we will describe in
+<a data-type="xref" href="#more_on_playbooks_a"/>, is to commit an encrypted version of the <em>secrets.yml</em> file by using
+Ansible&#8217;s <code>vault</code> functionality.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" id="using_iteration_to_install_multiple_packages">
+<h1>Using Iteration (with_items) to Install Multiple Packages</h1>
+
+<p>We&#8217;re going to need two types of packages for our Mezzanine
+deployment.<a data-type="indexterm" id="ix_Mezdepit" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="using iteration to install multiple packages"/><a data-type="indexterm" id="ix_iter" data-primary="iteration (with_items), installing multiple packages with"/><a data-type="indexterm" id="ix_withit" data-primary="with_items clause" data-secondary="using to install multiple packages"/> We need to install some system-level packages, and because we&#8217;re going
+to deploy on Ubuntu, we use apt as our package manager
+for the system packages. We also need to install some Python packages, and we&#8217;ll
+use pip to install the Python packages.</p>
+
+<p>System-level packages are generally easier to deal with than Python packages, because system-level packages are designed specifically to work with the operating system.<a data-type="indexterm" data-primary="system-level packages, installing"/>
+However, the system package repositories often don&#8217;t have the newest versions of
+the Python libraries we need, so we turn to the Python packages to install
+those. It&#8217;s a trade-off between stability and running the latest and greatest.</p>
+
+<p><a data-type="xref" href="#installing_system_packages"/> shows the task we&#8217;ll use to install the system
+packages.</p>
+<div id="installing_system_packages" data-type="example">
+<h5>Installing system packages</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install apt packages
+  apt: pkg={{ item }} update_cache=yes cache_valid_time=3600
+  become: True
+  with_items:
+    - git
+    - libjpeg-dev
+    - libpq-dev
+    - memcached
+    - nginx
+    - postgresql
+    - python-dev
+    - python-pip
+    - python-psycopg2
+    - python-setuptools
+    - python-virtualenv
+    - supervisor</pre></div>
+
+<p>Because we&#8217;re installing multiple packages, we use Ansible&#8217;s iteration functionality, the <code>with_items</code> clause. We could have installed the packages one at a time, like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install git
+  apt: pkg=git
+
+- name: install libjpeg-dev
+  apt: pkg=libjpeg-dev
+...</pre>
+
+<p>However, it&#8217;s easier to write the playbook if we group the packages in a list. When we invoke the <code>apt</code> module, we pass it <code>{{ item }}</code>.<a data-type="indexterm" data-primary="apt module" data-secondary="installing multiple packages using with_items"/>
+This is a placeholder variable that will be populated by each of the elements in the
+list of the <code>with_items</code> clause.</p>
+<div data-type="note">
+<p>By default, Ansible uses <code>item</code> as the name of the loop iteration variable. In
+<a data-type="xref" href="#more_on_playbooks_a"/>, we&#8217;ll show how to change this variable name.<a data-type="indexterm" data-primary="items"/></p>
+</div>
+
+<p>In addition, the <code>apt</code> module contains an optimization making it more efficient to install
+multiple packages by using the <code>with_items</code> clause. Ansible will
+pass the entire list of packages to the <code>apt</code> module, and the module will invoke the apt program only once, passing it the entire list of packages to be installed.
+Some modules, like <code>apt</code>, have been designed to handle lists intelligently like
+this.<a data-type="indexterm" data-primary="lists" data-secondary="modules handling intelligently"/> If a module doesn&#8217;t have native support for lists, Ansible will
+simply invoke the module multiple times, once for each element of the list.</p>
+
+<p>You can tell that the <code>apt</code> module is intelligent enough to handle multiple
+packages at once, because the output looks like this:</p>
+
+<pre data-type="programlisting">TASK: [install apt packages] **************************************************
+ok: [web] =&gt; (item=[u'git', u'libjpeg-dev', u'libpq-dev', u'memcached',
+u'nginx', u'postgresql', u'python-dev', u'python-pip', u'python-psycopg2',
+u'python-setuptools', u'python-virtualenv', u'supervisor'])</pre>
+
+<p>On the other hand, the <code>pip</code> module does not handle <a data-type="indexterm" data-primary="pip module" data-secondary="installing Python packages with"/><a data-type="indexterm" data-primary="Python" data-secondary="installing packages using pip module"/>lists intelligently, so
+Ansible must invoke it once for each element of the list, and the output looks
+like this:</p>
+
+<pre data-type="programlisting">TASK [install required python packages] ****************************************
+ok: [web] =&gt; (item=gunicorn)
+ok: [web] =&gt; (item=setproctitle)
+ok: [web] =&gt; (item=psycopg2)
+ok: [web] =&gt; (item=django-compressor)
+ok: [web] =&gt; (item=python-memcached)</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Adding the Become Clause to a Task</h1>
+
+<p>In the playbook examples of <a data-type="xref" href="#playbooks_a_beginning"/>, we wanted the whole
+playbook to run as root, so we added the <code>become: True</code> clause to the play.<a data-type="indexterm" data-primary="with_items clause" data-secondary="using to install multiple packages" data-startref="ix_withit"/><a data-type="indexterm" data-primary="iteration (with_items), installing multiple packages with" data-startref="ix_iter"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="using iteration to install multiple packages" data-startref="ix_Mezdepit"/> When we deploy Mezzanine, most of the tasks will be run as the user who is
+SSHing to the host, rather than root. Therefore, we don&#8217;t want to run as root
+for the entire play, only for select tasks.<a data-type="indexterm" data-primary="root user" data-secondary="adding become clause to selected tasks"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="adding become clause to tasks"/><a data-type="indexterm" data-primary="tasks" data-secondary="adding become clause to"/><a data-type="indexterm" data-primary="become clause" data-secondary="adding to tasks"/></p>
+
+<p>We can accomplish this by adding <code>become: True</code> to the tasks that do need to run
+as root, such as <a data-type="xref" href="#installing_system_packages"/>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Updating the Apt Cache</h1>
+<div data-type="note">
+<p>All of the example commands in this subsection are run on the (Ubuntu) remote
+host, not the control machine.</p>
+</div>
+
+<p class="pagebreak-before">Ubuntu maintains a cache with the names of all of the <em>apt</em> packages that are
+available in the Ubuntu package archive. Let&#8217;s say you try to install the
+package named <em>libssl-dev</em>. We can use the <code>apt-cache</code> program <a data-type="indexterm" id="ix_Mezdepac" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="updating the apt cache"/><a data-type="indexterm" id="ix_aptmodupd" data-primary="apt module" data-secondary="updating the apt cache"/><a data-type="indexterm" data-primary="Ubuntu" data-secondary="cache of names of all apt packages available"/>to query the
+local cache to see what version it knows about:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ apt-cache policy libssl-dev</pre>
+
+<p>The output is shown in <a data-type="xref" href="#apt_cache_output"/>.</p>
+<div id="apt_cache_output" data-type="example">
+<h5>apt-cache output</h5>
+
+<pre data-type="programlisting">libssl-dev:
+  Installed: (none)
+  Candidate: 1.0.1f-1ubuntu2.21
+  Version table:
+     1.0.1f-1ubuntu2.21 0
+        500 http://archive.ubuntu.com/ubuntu/ trusty-updates/main amd64 Packages
+        500 http://security.ubuntu.com/ubuntu/ trusty-security/main amd64 Packages
+     1.0.1f-1ubuntu2 0
+        500 http://archive.ubuntu.com/ubuntu/ trusty/main amd64 Packages</pre></div>
+
+<p>As we can see, this package is not installed locally. According to the local
+cache, the latest version is 1.0.1f-1ubuntu2.21. We also see some information
+about the location of the package archive.</p>
+
+<p>In some cases, when the Ubuntu project releases a new version of a package, it
+removes the old version from the package archive. If the local apt cache of an
+Ubuntu server hasn&#8217;t been updated, then it will attempt to install a package
+that doesn&#8217;t exist in the package archive.</p>
+
+<p>To continue with our example, let&#8217;s say we attempt to install the
+<em>libssl-dev</em> package:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ apt-get install libssl-dev</pre>
+
+<p>If version 1.0.1f-1ubuntu2.21 is no longer available in the package archive, we&#8217;ll see the following error:</p>
+
+<pre data-type="programlisting">Err http://archive.ubuntu.com/ubuntu/ trusty-updates/main libssl-dev amd64
+1.0.1f-1ubuntu2.21
+  404  Not Found [IP: 91.189.88.153 80]
+Err http://security.ubuntu.com/ubuntu/ trusty-security/main libssl-dev amd64
+1.0.1f-1ubuntu2.21
+  404  Not Found [IP: 91.189.88.149 80]
+Err http://security.ubuntu.com/ubuntu/ trusty-security/main libssl-doc all
+1.0.1f-1ubuntu2.21
+  404  Not Found [IP: 91.189.88.149 80]
+E: Failed to fetch
+http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl-dev_1.0.1f-1ubuntu2.
+21_amd64.deb
+404  Not Found [IP: 91.189.88.149 80]
+
+E: Failed to fetch
+http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl-doc_1.0.1f-1ubuntu2.
+21_all.deb
+404  Not Found [IP: 91.189.88.149 80]
+
+E: Unable to fetch some archives, maybe run apt-get update or try with
+--fix-missing?</pre>
+
+<p>On the command line, the way to bring the local apt cache up-to-date is to run
+<code>apt-get update</code>. When using the <code>apt</code> Ansible module, the way to bring the
+local apt cache up-to-date is to pass the <code>update_cache=yes</code> argument when
+invoking the module, as shown in <a data-type="xref" href="#installing_system_packages"/>.</p>
+
+<p>Because updating the cache takes additional time, and because we might be
+running a playbook multiple times in quick succession in order to debug it, we
+can avoid paying the cache update penalty by using the <code>cache_valid_time</code>
+argument to the module. This instructs to update the cache only if it&#8217;s older than
+a certain threshold. The example in <a data-type="xref" href="#installing_system_packages"/> uses
+<code>cache_valid_time=3600</code>, which updates the cache only if it&#8217;s older than 3,600
+seconds (1 hour)<a data-type="indexterm" data-primary="apt module" data-secondary="updating the apt cache" data-startref="ix_aptmodupd"/>.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="updating the apt cache" data-startref="ix_Mezdepac"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Checking Out the Project by Using Git</h1>
+
+<p>Although Mezzanine can be used without writing any custom code, one of its
+strengths is that it is written on top of the Django platform, and Django is a
+great web application platform if you know Python. <a data-type="indexterm" id="ix_Mezdepcheck" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="checking out the project using Git"/>If you just wanted a CMS,
+you&#8217;d likely just use something like WordPress. But if you&#8217;re writing a custom
+application that incorporates CMS functionality, Mezzanine is a good way to go.</p>
+
+<p>As part of the deployment, you need to check out the Git repository that contains
+your Django applications.<a data-type="indexterm" data-primary="projects" data-secondary="in Django" data-tertiary="checking out from Git repository"/><a data-type="indexterm" data-primary="Django" data-secondary="projects"/> In Django terminology, this repository must contain a
+<em>project</em>. I&#8217;ve created a repository on <a href="https://github.com/ansiblebook/mezzanine_example">GitHub</a> that contains a Django project with
+the expected files.<a data-type="indexterm" data-primary="GitHub repositories" data-secondary="mezzanine_example project"/> That&#8217;s the project that gets deployed in this playbook.</p>
+
+<p>I created these files using the <code>mezzanine-project</code> program <a data-type="indexterm" data-primary="mezzanine-project program"/>that ships with
+Mezzanine, like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ mezzanine-project mezzanine_example
+$ chmod +x mezzanine_example/manage.py</pre>
+
+<p>Note that I don&#8217;t have any custom Django applications in my repository, just the
+files that are required for the project. In a real Django deployment, this
+repository would contain subdirectories that contain additional Django
+applications.</p>
+
+<p><a data-type="xref" href="#check_out_repo_with_git"/> shows how we use the <code>git</code> module to check out a Git repository onto a remote host.<a data-type="indexterm" data-primary="git module, checking out Git repository with"/></p>
+<div id="check_out_repo_with_git" data-type="example">
+<h5>Checking out the Git repository</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: check out the repository on the host
+  git: repo={{ repo_url }} dest={{ proj_path }} accept_hostkey=yes</pre></div>
+
+<p>I&#8217;ve made the project repository public so that readers can access it, but in general, you&#8217;ll be checking out private Git repositories over SSH. For this
+reason, I&#8217;ve set the <code>repo_url</code> variable<a data-type="indexterm" data-primary="repo_url variable"/> to use the scheme that will clone the
+repository over SSH:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">repo_url: git@github.com:ansiblebook/mezzanine_example.git</pre>
+
+<p>If you&#8217;re following along at home, to run this playbook you must have the following:</p>
+
+<ul>
+<li>
+<p>A GitHub account</p>
+</li>
+<li>
+<p>A public SSH key associated with your GitHub account</p>
+</li>
+<li>
+<p>An SSH agent running on your control machine, with agent forwarding enabled</p>
+</li>
+<li>
+<p>Your SSH key added to your SSH agent</p>
+</li>
+</ul>
+
+<p>Once your SSH agent is running, add your key:</p>
+
+<pre data-type="programlisting">$ ssh-add</pre>
+
+<p>If successful, the following command will output the public key of the SSH you
+just added:</p>
+
+<pre data-type="programlisting">$ ssh-add -l</pre>
+
+<p>The output should look like something this:</p>
+
+<pre data-type="programlisting">2048 SHA256:o7H/I9rRZupXHJ7JnDi10RhSzeAKYiRVrlH9L/JFtfA /Users/lorin/.ssh/id_rsa</pre>
+
+<p>To enable agent forwarding, add the following to your <em>ansible.cfg</em>:</p>
+
+<pre data-type="programlisting">[ssh_connection]
+ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o ForwardAgent=yes</pre>
+
+<p>You can verify that agent forwarding is working by using Ansible to list the
+known keys:</p>
+
+<pre data-type="programlisting">$ ansible web -a "ssh-add -l"</pre>
+
+<p>You should see the same output as when you run <code>ssh-add -l</code> on your local
+machine.</p>
+
+<p>Another useful check is to verify that you can reach GitHub&#8217;s SSH server:</p>
+
+<pre data-type="programlisting">$ ansible web -a "ssh -T git@github.com"</pre>
+
+<p>If successful, the output should look like this:</p>
+
+<pre data-type="programlisting">web | FAILED | rc=1 &gt;&gt;
+Hi lorin! You've successfully authenticated, but GitHub does not provide shell
+access.</pre>
+
+<p>Even though the word <code>FAILED</code> appears in the output, if the message from GitHub
+appears, then it was successful.</p>
+
+<p>In addition to specifying the repository URL with the <code>repo</code> parameter and the
+destination path of the repository as the <code>dest</code> parameter, we also pass an
+additional parameter, <code>accept_hostkey</code>, which is related to
+<em>host-key checking</em>.  We discuss SSH agent forwarding and host-key checking in
+more detail in <a data-type="xref" href="#Appendix"/>.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="checking out the project using Git" data-startref="ix_Mezdepcheck"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" id="installing_mezzanine_virtualenv">
+<h1>Installing Mezzanine and Other Packages into a virtualenv</h1>
+
+<p>As mentioned earlier in this chapter, we&#8217;re going
+to install some of the packages as Python packages because we can get more
+recent versions of those than if we installed the equivalent apt package.<a data-type="indexterm" id="ix_Mezdepinst" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="installing Mezzanine and other packages into virtualenv"/><a data-type="indexterm" id="ix_virtenv" data-primary="virtualenv" data-secondary="installing Mezzanine and other packages into"/></p>
+
+<p>We can install Python packages systemwide as the root user, but it&#8217;s better
+practice to install these packages in an isolated environment to avoid polluting
+the system-level Python packages.<a data-type="indexterm" data-primary="Python" data-secondary="virtualenvs"/> In Python, these types of isolated package
+environments are called <em>virtualenvs</em>. A user can create multiple virtualenvs,
+and can install Python packages into a virtualenv without needing root access.</p>
+
+<p>Ansible&#8217;s <code>pip</code> module has support for installing packages
+into a virtualenv and for creating the virtualenv if it is not available.</p>
+
+<p><a data-type="xref" href="#install_global_python_packages"/> shows how to use <code>pip</code> to install several
+packages globally.<a data-type="indexterm" data-primary="pip module" data-secondary="installing global Python packages"/> Note that this requires <code>become: True</code>.</p>
+<div id="install_global_python_packages" data-type="example">
+<h5>Install Python requirements</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install Python requirements globally via pip
+  pip: name={{ item }} state=latest
+  with_items:
+    - pip
+    - virtualenv
+    - virtualenvwrapper
+  become: True</pre></div>
+
+<p><a data-type="xref" href="#install_mezzanine_and_other_python_packages"/> shows the two tasks that we use
+to install Python packages into the virtualenv, both of which use the <code>pip</code>
+module, although in different ways.</p>
+<div id="install_mezzanine_and_other_python_packages" data-type="example">
+<h5>Install Python packages</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install requirements.txt
+  pip: requirements={{ proj_path }}/{{ reqs_path }} virtualenv={{ venv_path }}
+
+- name: install required python packages
+  pip: name={{ item }} virtualenv={{ venv_path }}
+  with_items:
+    - gunicorn
+    - setproctitle
+    - psycopg2
+    - django-compressor
+    - python-memcached</pre></div>
+
+<p>A common pattern in Python projects is to specify the package dependencies in a
+file called <em>requirements.txt.</em> <a data-type="indexterm" data-primary="Python" data-secondary="package dependencies in requirements.txt file"/><a data-type="indexterm" data-primary="requirements.txt file"/>And, indeed, the repository in our Mezzanine example
+contains a <em>requirements.txt</em> file. It looks like <a data-type="xref" href="#requirements_txt"/>.</p>
+<div id="requirements_txt" data-type="example">
+<h5>requirements.txt</h5>
+
+<pre data-type="programlisting">Mezzanine==4.2.2</pre></div>
+
+<p>The <em>requirements.txt</em> file is missing several other Python packages that we need for the
+deployment, so we explicitly specify these as a separate task.</p>
+
+<p>Note that the Mezzanine Python package in <em>requirements.txt</em> is pinned to a
+specific version (4.2.2), whereas the other packages aren&#8217;t pinned; we just grab the latest versions of those. If we
+did not want to pin Mezzanine, we simply could have added Mezzanine to the list of
+packages, like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install python packages
+  pip: name={{ item }} virtualenv={{ venv_path }}
+  with_items:
+    - mezzanine
+    - gunicorn
+    - setproctitle
+    - south
+    - psycopg2
+    - django-compressor
+    - python-memcached</pre>
+
+<p>Alternately, if we wanted to pin all of the packages, we have several options.
+We could have specified all the packages in the <em>requirements.txt</em> file. This file contains information
+about the packages and the dependencies.<a data-type="indexterm" data-primary="requirements.txt file" data-secondary="example file"/> An example file looks like
+<a data-type="xref" href="#example_requirements_txt"/>.</p>
+<div id="example_requirements_txt" data-type="example">
+<h5>Example requirements.txt</h5>
+
+<pre data-type="programlisting">beautifulsoup4==4.5.3
+bleach==1.5.0
+chardet==2.3.0
+Django==1.10.4
+django-appconf==1.0.2
+django-compressor==2.1
+django-contrib-comments==1.7.3
+filebrowser-safe==0.4.6
+future==0.16.0
+grappelli-safe==0.4.5
+gunicorn==19.6.0
+html5lib==0.9999999
+Mezzanine==4.2.2
+oauthlib==2.0.1
+olefile==0.43
+Pillow==4.0.0
+psycopg2==2.6.2
+python-memcached==1.58
+pytz==2016.10
+rcssmin==1.0.6
+requests==2.12.4
+requests-oauthlib==0.7.0
+rjsmin==1.0.12
+setproctitle==1.1.10
+six==1.10.0
+tzlocal==1.3</pre></div>
+
+<p>If you have an existing virtualenv with the packages installed, you can use the
+<code>pip freeze</code> command to print out a list of installed packages.<a data-type="indexterm" data-primary="pip freeze command"/> For example, if
+your virtualenv is in <em>~/mezzanine_example</em>, you can activate your virtualenv
+and print out the packages in the virtualenv like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ source ~/mezzanine_example/bin/activate
+$ pip freeze &gt; requirements.txt</pre>
+
+<p><a data-type="xref" href="#installing_from_requirements_txt"/> shows how we could have installed all the
+packages by using a <em>requirements.txt</em> file.<a data-type="indexterm" data-primary="requirements.txt file" data-secondary="installing packages from"/></p>
+<div id="installing_from_requirements_txt" data-type="example">
+<h5>Installing from requirements.txt</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: copy requirements.txt file
+  copy: src=files/requirements.txt dest=~/requirements.txt
+- name: install packages
+  pip: requirements=~/requirements.txt virtualenv={{ venv_path }}</pre></div>
+
+<p>Alternatively, we could have specified both the package names and their versions in the
+list, as shown in <a data-type="xref" href="#specifying_package_names_and_versions"/>. We pass a list of
+dictionaries, and dereference the elements with <code>item.name</code> and <code>item.version</code>.</p>
+<div id="specifying_package_names_and_versions" data-type="example">
+<h5>Specifying package names and version</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: python packages
+  pip: name={{ item.name }} version={{ item.version }} virtualenv={{ venv_path }}
+  with_items:
+    - {name: mezzanine, version: 4.2.2 }
+    - {name: gunicorn, version: 19.6.0 }
+    - {name: setproctitle, version: 1.1.10 }
+    - {name: psycopg2, version: 2.6.2 }
+    - {name: django-compressor, version: 2.1 }
+    - {name: python-memcached, version: 1.58 }</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" id="COMPLEX_ARGS">
+<h1>Complex Arguments in Tasks: A Brief Digression</h1>
+
+<p>Up until this point in the book, every time we have invoked a module, we have
+passed the argument as a string.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="installing Mezzanine and other packages into virtualenv" data-startref="ix_Mezdepinst"/><a data-type="indexterm" data-primary="virtualenv" data-secondary="installing Mezzanine and other packages into" data-startref="ix_virtenv"/><a data-type="indexterm" id="ix_taskcarg" data-primary="tasks" data-secondary="complex arguments in"/> Taking the pip example from
+<a data-type="xref" href="#specifying_package_names_and_versions"/>, we passed the <code>pip</code> module a string as
+an argument:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install package with pip
+  pip: name={{ item.name }} version={{ item.version }} virtualenv={{ venv_path }}</pre>
+
+<p>If we don&#8217;t like long lines in our files, we could break up the argument
+string across multiple lines by using YAML&#8217;s line folding, which we originally
+wrote about in <a data-type="xref" href="#line_folding"/>:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install package with pip
+  pip: &gt;
+    name={{ item.name }}
+    version={{ item.version }}
+    virtualenv={{ venv_path }}</pre>
+
+<p>Ansible also provides another option for breaking up a module invocation
+across multiple lines. Instead of passing a string, we can pass a dictionary
+in which the keys are the variable names. This means we can invoke
+<a data-type="xref" href="#specifying_package_names_and_versions"/> like this instead:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install package with pip
+  pip:
+    name: "{{ item.name }}"
+    version: "{{ item.version }}"
+    virtualenv: "{{ venv_path }}"</pre>
+
+<p>The dictionary-based approach to passing arguments is also useful when invoking
+modules that take complex arguments. A <em>complex argument</em> is an argument to a
+module that is a list or a dictionary.<a data-type="indexterm" data-primary="complex arguments"/><a data-type="indexterm" data-primary="arguments, complex"/><a data-type="indexterm" data-primary="ec2 module" data-secondary="complex arguments in"/> The <code>ec2</code> module, which creates new
+servers on Amazon EC2, is a good example of a module that takes complex
+arguments. <a data-type="xref" href="#calling_ec2_complex_args"/> shows how to call a module that takes a
+list as an argument for the <code>group</code> parameter, and a dictionary as an argument
+to the <code>instance_tags</code> parameter. We&#8217;ll cover this module in more detail in <a data-type="xref" href="#cloud"/>.</p>
+<div id="calling_ec2_complex_args" data-type="example">
+<h5>Calling a module with complex arguments</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create an ec2 instance
+  ec2:
+    image: ami-8caa1ce4
+    instance_type: m3.medium
+    key_name: mykey
+    group:
+      - web
+      - ssh
+    instance_tags:
+      type: web
+      env: production</pre></div>
+
+<p>You can even mix it up by passing some arguments as a
+string and others as a dictionary, by using the <code>args</code> clause to specify some of
+the variables as a dictionary. We could rewrite our preceding example as follows:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create an ec2 instance
+  ec2: image=ami-8caa1ce4 instance_type=m3.medium key_name=mykey
+  args:
+    group:
+      - web
+      - ssh
+    instance_tags:
+      type: web
+      env: production</pre>
+
+<p>If you&#8217;re using the <code>local_action</code> clause (we&#8217;ll cover this in more
+detail in <a data-type="xref" href="#more_on_playbooks_b"/>), the syntax for complex args
+changes slightly.<a data-type="indexterm" data-primary="local_action clause" data-secondary="complex arguments and"/> You need to add <code>module: &lt;modulename&gt;</code> as shown here:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create an ec2 instance
+  local_action:
+    module: ec2
+    image: ami-8caa1ce4
+    instance_type: m3.medium
+    key_name: mykey
+    group:
+      - web
+      - ssh
+    instance_tags:
+      type: web
+      env: production</pre>
+
+<p>You can also mix simple arguments and complex arguments when using
+<code>local_action</code>:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create an ec2 instance
+  local_action: ec2 image=ami-8caa1ce4 instance_type=m3.medium key_name=mykey
+  args:
+    image: ami-8caa1ce4
+    instance_type: m3.medium
+    key_name: mykey
+    group:
+      - web
+      - ssh
+    instance_tags:
+      type: web
+      env: production</pre>
+<div data-type="warning">
+<p>Ansible allows you to specify file permissions, which are used by several modules, including <code>file</code>, <code>copy</code>, and <code>template</code>.<a data-type="indexterm" data-primary="file permissions"/> If you are specifying an octal value as a complex argument, it must either start the value with a <code>0</code> or quote it as a string.<a data-type="indexterm" data-primary="octal values as complex arguments"/></p>
+
+<p>For example, note how the <code>mode</code> argument starts with a 0:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: copy index.html
+  copy:
+    src: files/index.html
+    dest: /usr/share/nginx/html/index.html
+    mode: "0644"</pre>
+
+<p>If you do not start the mode argument with a <code>0</code> or quote it as a string, Ansible will interpret the value as a decimal number instead of an octal, and will not set the file permissions the way you expect. For details, see <a href="http://bit.ly/1GASfbl">GitHub</a>.</p>
+</div>
+
+<p>If you want to break your arguments across multiple lines, and you aren&#8217;t
+passing complex arguments, which form you choose is a matter of taste. I
+generally prefer dictionaries to multiline strings, but in this book I use both
+forms.<a data-type="indexterm" data-primary="tasks" data-secondary="using complex arguments in" data-startref="ix_taskcarg"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Configuring the Database</h1>
+
+<p>When Django runs in
+development mode, it uses the SQLite backend. This backend will create the
+database file if the file does not exist.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="configuring the database"/><a data-type="indexterm" data-primary="PostgreSQL" data-secondary="configuring database for Mezzanine app deployment with Ansible"/><a data-type="indexterm" data-primary="databases" data-secondary="creating PostgreSQL database and user"/></p>
+
+<p>When using a database management system such as Postgres, we need
+to first create the database inside Postgres and then create the user account
+that owns the database. Later, we will configure Mezzanine with the
+credentials of this user.</p>
+
+<p>Ansible ships with the <code>postgresql_user</code> and <code>postgresql_db</code> modules for
+creating users and databases inside Postgres.<a data-type="indexterm" data-primary="postgresql_db module"/><a data-type="indexterm" data-primary="postgresql_user module"/>
+<a data-type="xref" href="#creating_the_database_and_user"/> shows how we invoke these modules in our
+playbook.</p>
+
+<p>When creating the database, we specify locale information through the <code>lc_ctype</code>
+and <code>lc_collate</code> parameters.<a data-type="indexterm" data-primary="locale categories (LC_CTYPE, LC_COLLATE)"/> We use the <code>locale_gen</code> module to <a data-type="indexterm" data-primary="locale_gen module"/>ensure that the
+locale we are using is installed in the operating system.</p>
+<div id="creating_the_database_and_user" data-type="example">
+<h5>Creating the database and database user</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create project locale
+  locale_gen: name={{ locale }}
+  become: True
+
+- name: create a DB user
+  postgresql_user:
+    name: "{{ database_user }}"
+    password: "{{ db_pass }}"
+  become: True
+  become_user: postgres
+
+- name: create the database
+  postgresql_db:
+    name: "{{ database_name }}"
+    owner: "{{ database_user }}"
+    encoding: UTF8
+    lc_ctype: "{{ locale }}"
+    lc_collate: "{{ locale }}"
+    template: template0
+  become: True
+  become_user: postgres</pre></div>
+
+<p>Note the use of <code>become: True</code> and <code>become_user: postgres</code> on the last two tasks.
+When you install Postgres on Ubuntu, the installation process creates a user named
+<code>postgres</code> that has administrative privileges for the Postgres installation.
+Note that the root account does not have administrative privileges in Postgres
+by default, so in the playbook, we need to <code>become</code> the Postgres user in order to
+perform administrative tasks, such as creating users and databases.<a data-type="indexterm" data-primary="root user" data-secondary="Postgres user"/><a data-type="indexterm" data-primary="become clause" data-secondary="with Postgres user"/></p>
+
+<p>When we create the database, we set the encoding (<code>UTF8</code>) and locale
+categories (<code>LC_CTYPE</code>, <code>LC_COLLATE</code>) associated with the database.<a data-type="indexterm" data-primary="templates" data-secondary="template databases"/> Because we are
+setting locale information, we use <em>template0</em> as the template.<span data-type="footnote">See the <a href="http://bit.ly/1F5AYpN">Postgres documentation</a> for more details about template databases.</span></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Generating the local_settings.py File from a Template</h1>
+
+<p>Django expects to find project-specific settings in a file called <em>settings.py</em>.<a data-type="indexterm" id="ix_locset" data-primary="local_settings.py file, generating from a template"/><a data-type="indexterm" id="ix_Mezdepls" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="generating local_settings.py file from template"/><a data-type="indexterm" id="ix_templlocset" data-primary="Jinja2 template engine" data-secondary="generating local_settings.py file from a template"/><a data-type="indexterm" data-primary="settings.py file"/><a data-type="indexterm" data-primary="Django" data-secondary="project settings in settings.py file"/>
+Mezzanine follows the common Django idiom of breaking these settings into two
+groups:</p>
+
+<ul>
+<li>
+<p>Settings that are the same for all deployments (<em>settings.py</em>)</p>
+</li>
+<li>
+<p>Settings that vary by deployment (<em>local_settings.py</em>)</p>
+</li>
+</ul>
+
+<p>We define the settings that are the same for all deployments in the <em>settings.py</em> file in our project repository. You can find that file on <a href="http://bit.ly/2jaw4zf">GitHub</a>.</p>
+
+<p>The <em>settings.py</em> file contains a Python snippet that loads a
+<em>local_settings.py</em> file that contains deployment-specific settings.  The
+<em>.gitignore</em> file is configured to ignore the <em>local_settings.py</em> file, since
+developers will commonly create this file and configure it for local
+development.</p>
+
+<p>As part of our deployment, we need to create a <em>local_settings.py</em> file and upload it to the remote host. <a data-type="xref" href="#local_settings_py_j2"/> shows the Jinja2 template that we
+use.</p>
+<div id="local_settings_py_j2" data-type="example">
+<h5>local_settings.py.j2</h5>
+
+<pre data-type="programlisting" data-code-language="python">from __future__ import unicode_literals
+
+SECRET_KEY = "{{ secret_key }}"
+NEVERCACHE_KEY = "{{ nevercache_key }}"
+ALLOWED_HOSTS = [{% for domain in domains %}"{{ domain }}",{% endfor %}]
+
+DATABASES = {
+    "default": {
+        # Ends with "postgresql_psycopg2", "mysql", "sqlite3" or "oracle".
+        "ENGINE": "django.db.backends.postgresql_psycopg2",
+        # DB name or path to database file if using sqlite3.
+        "NAME": "{{ proj_name }}",
+        # Not used with sqlite3.
+        "USER": "{{ proj_name }}",
+        # Not used with sqlite3.
+        "PASSWORD": "{{ db_pass }}",
+        # Set to empty string for localhost. Not used with sqlite3.
+        "HOST": "127.0.0.1",
+        # Set to empty string for default. Not used with sqlite3.
+        "PORT": "",
+    }
+}
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTOCOL", "https")
+
+CACHE_MIDDLEWARE_SECONDS = 60
+
+CACHE_MIDDLEWARE_KEY_PREFIX = "{{ proj_name }}"
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.memcached.MemcachedCache",
+        "LOCATION": "127.0.0.1:11211",
+    }
+}
+
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"</pre></div>
+
+<p>Most of this template is straightforward; it uses the <code>{{ variable }}</code> syntax to insert the values of variables such as <code>secret_key</code>, <code>nevercache_key</code>, <code>proj_name</code>, and <code>db_pass</code>. The only nontrivial bit of logic is the line shown in <a data-type="xref" href="#for_loop_in_jinja2_template"/>.</p>
+<div id="for_loop_in_jinja2_template" data-type="example">
+<h5>Using a for loop in a Jinja2 template</h5>
+
+<pre data-type="programlisting">ALLOWED_HOSTS = [{% for domain in domains %}"{{ domain }}",{% endfor %}]</pre></div>
+
+<p>If we look back at our variable definition, we have a variable called <code>domains</code> that&#8217;s defined like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">domains:
+  - 192.168.33.10.xip.io
+  - www.192.168.33.10.xip.io</pre>
+
+<p>Our Mezzanine app is going to respond only to requests that are for one of the
+hostnames listed in the <code>domains</code> variable: <em>http://192.168.33.10.xip.io</em> or
+<em>http://www.192.168.33.10.xip.io</em> in our case. If a request reaches Mezzanine but
+the host header is something other than those two domains, the site will return
+"Bad Request (400)."</p>
+
+<p>We want this line in the generated file to look like this:</p>
+
+<pre data-type="programlisting">ALLOWED_HOSTS = ["192.168.33.10.xip.io", "www.192.168.33.10.xip.io"]</pre>
+
+<p>We can achieve this by using a <code>for</code> loop, as shown in
+<a data-type="xref" href="#for_loop_in_jinja2_template"/>. Note that it doesn&#8217;t do exactly what we want.
+Instead, it will have a trailing comma, like this:</p>
+
+<pre data-type="programlisting">ALLOWED_HOSTS = ["192.168.33.10.xip.io", "www.192.168.33.10.xip.io",]</pre>
+
+<p>However, Python is perfectly happy with trailing commas in lists, so we can
+leave it like this.</p>
+<aside id="XIP_IO" data-type="sidebar">
+<h5>What&#8217;s xip.io?</h5>
+<p>You might have noticed that the domains we are using look a little strange: <em>192.168.33.10.xip.io</em> and <em>www.192.168.33.10.xip.io</em>. They are domain names, but they have the IP address embedded within them.<a data-type="indexterm" data-primary="domain names, mapping to IP addresses"/><a data-type="indexterm" data-primary="xip.io"/></p>
+
+<p>When you access a website, you pretty much always point your browser to a domain name such as <em>http://www.ansiblebook.com</em>, instead of an IP address such as <em>http://151.101.192.133</em>. When we write our playbook to deploy Mezzanine to Vagrant, we want to configure the application with the domain name or names that it should be accessible by.</p>
+
+<p>The problem is that we don&#8217;t have a DNS record that maps to the IP address of our
+Vagrant box.<a data-type="indexterm" data-primary="DNS" data-secondary="domain name mapping to IP address"/> In this case, that&#8217;s <em>192.168.33.10</em>. There&#8217;s nothing stopping us
+from setting up a DNS entry for this. For example, I could create a DNS entry
+from <em>mezzanine-internal.ansiblebook.com</em> that points to <em>192.168.33.10</em>.</p>
+
+<p>However, if we want to create a DNS name that resolves to a particular IP address, there&#8217;s a convenient service called <em>xip.io</em>, provided free of charge by Basecamp, that we can use so that we don&#8217;t have to avoid creating our own DNS records. If
+<em>AAA.BBB.CCC.DDD</em> is an IP address, the DNS entry <em>AAA.BBB.CCC.DDD.xip.io</em>
+will resolve to <em>AAA.BBB.CCC.DDD</em>.  For example, <em>192.168.33.10.xip.io</em> resolves
+to <em>192.168.33.10.</em> In addition, <em>www.192.168.33.10.xip.io</em> also resolves to
+<em>192.168.33.10.</em></p>
+
+<p>I find <em>xip.io</em> to be a great tool when I&#8217;m deploying web applications to
+private IP addresses for testing purposes. Alternatively, you can simply add entries to the <em>/etc/hosts</em> file on your local machine, which also works when you&#8217;re offline.</p>
+</aside>
+
+<p>Let&#8217;s examine the Jinja2 <code>for</code> loop syntax.<a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="generating local_settings.py file from a template" data-tertiary="for loop syntax"/> To make things a little easier to
+read, we&#8217;ll break it up across multiple lines, like this:</p>
+
+<pre data-type="programlisting">ALLOWED_HOSTS = [
+{% for domain in domains %}
+                 "{{ domain }}",
+{% endfor %}
+                ]</pre>
+
+<p>The generated config file looks like this, which is still valid Python.</p>
+
+<pre data-type="programlisting" data-code-language="python">ALLOWED_HOSTS = [
+                 "192.168.33.10.xip.io",
+                 "www.192.168.33.10.xip.io",
+                ]</pre>
+
+<p>Note that the <code>for</code> loop has to be terminated by an <code>{% endfor %}</code> statement. Also note that the <code>for</code> statement and the <code>endfor</code> statement are surrounded by <code>{% %}</code> delimiters, which are different from the <code>{{ }}</code> delimiters that we use for
+variable substitution.<a data-type="indexterm" data-primary="{% %} delimiters, Jinja2 for loops"/></p>
+
+<p>All variables and facts that have been defined in a playbook are available
+inside Jinja2 templates, so we never need to explicitly pass variables to
+templates.<a data-type="indexterm" data-primary="local_settings.py file, generating from a template" data-startref="ix_locset"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="generating local_settings.py file from template" data-startref="ix_Mezdepls"/><a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="generating local_settings.py file from a template" data-startref="ix_templlocset"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Running django-manage Commands</h1>
+
+<p>Django applications use a special script called <a href="http://bit.ly/2iica5a"><em>manage.py</em></a> that performs <a data-type="indexterm" data-primary="manage.py script (Django apps)"/><a data-type="indexterm" data-primary="Django" data-secondary="manage.py script"/><a data-type="indexterm" data-primary="django-manage commands"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="running django_manage commands"/><a data-type="indexterm" data-primary="databases" data-secondary="creating and managing with django_manage commands"/>administrative actions for Django applications such as the following:</p>
+
+<ul>
+<li>
+<p>Creating database tables</p>
+</li>
+<li>
+<p>Applying database migrations</p>
+</li>
+<li>
+<p>Loading fixtures from files into the database</p>
+</li>
+<li>
+<p>Dumping fixtures from the database to files</p>
+</li>
+<li>
+<p>Copying static assets to the appropriate directory</p>
+</li>
+</ul>
+
+<p>In addition to the built-in commands that <em>manage.py</em> supports, Django
+applications can add custom commands.<a data-type="indexterm" data-primary="createdb command"/> Mezzanine adds a custom command called <code>createdb</code> that is used to initialize the database and copy the static assets to the appropriate place. The official Fabric scripts do the equivalent of this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ manage.py createdb --noinput --nodata</pre>
+
+<p>Ansible ships with a <code>django_manage</code> module that invokes <code>manage.py</code> commands. We could invoke it like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"</pre>
+
+<p>Unfortunately, the custom <code>createdb</code> command that Mezzanine adds isn&#8217;t idempotent. If invoked a second
+time, it will fail like this:</p>
+
+<pre data-type="programlisting">TASK: [initialize the database] ***********************************************
+failed: [web] =&gt; {"cmd": "python manage.py createdb --noinput --nodata", "failed"
+: true, "path": "/home/vagrant/mezzanine_example/bin:/usr/local/sbin:/usr/local/b
+in:/usr/sbin: /usr/bin:/sbin:/bin:/usr/games:/usr/local/games", "state": "absent"
+, "syspath": ["", "/usr/lib/python2.7", "/usr/lib/python2.7/plat-x86_64-linux-gnu
+", "/usr/lib/python2.7/lib-tk", "/usr/lib/python2.7/lib-old", "/usr/lib/python2.7
+/lib-dynload", "/usr/local/lib/python2.7/dist-packages", "/usr/lib/python2.7/dist
+-packages"]}
+msg:
+:stderr: CommandError: Database already created, you probably want the syncdb or
+migrate command</pre>
+
+<p>Fortunately, the custom <code>createdb</code> command is effectively equivalent to two idempotent<a data-type="indexterm" data-primary="migrate command"/><a data-type="indexterm" data-primary="collectstatic command"/> built-in <code>manage.py</code> commands:</p>
+<dl>
+<dt><code>migrate</code></dt>
+<dd>
+<p>Create and update database tables for Django models</p>
+</dd>
+<dt><code>collectstatic</code></dt>
+<dd>
+<p>Copy the static assets to the appropriate directories</p>
+</dd>
+</dl>
+
+<p>By invoking these commands, we get an idempotent task:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: apply migrations to create the database, collect static content
+  django_manage:
+    command: "{{ item }}"
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  with_items:
+    - syncdb
+    - collectstatic</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Running Custom Python Scripts in the Context of the Application</h1>
+
+<p>To initialize our application, we need to make two changes to<a data-type="indexterm" id="ix_Pycus" data-primary="Python" data-secondary="custom scripts, running in app&#x27;s virtualev context"/><a data-type="indexterm" id="ix_MezdepcusPy" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="running custom Python scripts in app virtualenv context"/> our database:</p>
+
+<ul>
+<li>
+<p>We need to create a <a href="http://bit.ly/2hYWztG">Site</a> model object that contains the domain name of our site (in our case, that&#8217;s <em>192.168.33.10.xip.io</em>).</p>
+</li>
+<li>
+<p>We need to set the administrator username and password.</p>
+</li>
+</ul>
+
+<p>Although we could make these changes with raw SQL commands or Django data
+migrations, the Mezzanine Fabric scripts use Python scripts, so that&#8217;s how we&#8217;ll do it.</p>
+
+<p>There are two tricky parts here. The Python scripts need to run in the context
+of the virtualenv that we&#8217;ve created, and the Python environment needs to be set
+up properly so that the script will import the <em>settings.py</em> file that&#8217;s in
+<em>~/mezzanine/mezzanine_example/mezzanine_example</em>.</p>
+
+<p>In most cases, if we needed some custom Python code, I&#8217;d write a custom Ansible
+module. However, as far as I know, Ansible doesn&#8217;t let you execute a module
+in the context of a virtualenv, so that&#8217;s out.</p>
+
+<p>I used the <code>script</code> module instead. <a data-type="indexterm" data-primary="script module"/>This will copy over a custom script and execute
+it. I wrote two scripts, one to set the
+Site record, and the other to set the admin username and password.</p>
+
+<p>You can pass command-line arguments to <code>script</code> modules and parse them out, but
+I decided to pass the arguments as environment variables instead. I didn&#8217;t want
+to pass passwords via command-line argument (those show up in the process list
+when you run the <code>ps</code> command), and it&#8217;s easier to parse out environment
+variables in the scripts than it is to parse command-line arguments.</p>
+<div data-type="note">
+<p>You can set
+environment variables with  an <code>environment</code> clause on a task, passing it a dictionary that contains the environment variable names and values. You can add an <code>environment</code> clause to any task; it doesn&#8217;t have to be a <code>script</code>.</p>
+</div>
+
+<p>In order to run these scripts in the context of the virtualenv, <a data-type="indexterm" data-primary="path variable"/>I also needed to set the
+<code>path</code> variable so that the first Python executable in the <code>path</code> would be the one
+inside the virtualenv. <a data-type="xref" href="#script_custom_python"/> shows how I invoked the
+two scripts.</p>
+<div id="script_custom_python" data-type="example">
+<h5>Using the script module to invoke custom Python code</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: set the site id
+  script: scripts/setsite.py
+  environment:
+    PATH: "{{ venv_path }}/bin"
+    PROJECT_DIR: "{{ proj_path }}"
+    PROJECT_APP: "{{ proj_app }}"
+    WEBSITE_DOMAIN: "{{ live_hostname }}"
+
+- name: set the admin password
+  script: scripts/setadmin.py
+  environment:
+    PATH: "{{ venv_path }}/bin"
+    PROJECT_DIR: "{{ proj_path }}"
+    PROJECT_APP: "{{ proj_app }}"
+    ADMIN_PASSWORD: "{{ admin_pass }}"</pre></div>
+
+<p>The scripts themselves are shown in Examples <a href="#setsite_py">6-18</a> and <a href="#setadmin_py">6-19</a>. I put these in a <em>scripts</em> subdirectory.</p>
+<div id="setsite_py" data-type="example">
+<h5>scripts/setsite.py</h5>
+
+<pre data-type="programlisting" data-code-language="python">#!/usr/bin/env python
+# A script to set the site domain
+# Assumes two environment variables
+#
+# WEBSITE_DOMAIN: the domain of the site (e.g., www.example.com)
+# PROJECT_DIR: root directory of the project
+# PROJECT_APP: name of the project app
+import os
+import sys
+
+# Add the project directory to system path
+proj_dir = os.path.expanduser(os.environ['PROJECT_DIR'])
+sys.path.append(proj_dir)
+
+proj_app = os.environ['PROJECT_APP']
+os.environ['DJANGO_SETTINGS_MODULE'] = proj_app + '.settings'
+import django
+django.setup()
+from django.conf import settings
+from django.contrib.sites.models import Site
+domain = os.environ['WEBSITE_DOMAIN']
+Site.objects.filter(id=settings.SITE_ID).update(domain=domain)
+Site.objects.get_or_create(domain=domain)</pre></div>
+<div id="setadmin_py" data-type="example">
+<h5>scripts/setadmin.py</h5>
+
+<pre data-type="programlisting" data-code-language="python">#!/usr/bin/env python
+# A script to set the admin credentials
+# Assumes two environment variables
+#
+# PROJECT_DIR: the project directory (e.g., ~/projname)
+# PROJECT_APP: name of the project app
+# ADMIN_PASSWORD: admin user's password
+
+import os
+import sys
+
+# Add the project directory to system path
+proj_dir = os.path.expanduser(os.environ['PROJECT_DIR'])
+sys.path.append(proj_dir)
+
+proj_app = os.environ['PROJECT_APP']
+os.environ['DJANGO_SETTINGS_MODULE'] = proj_app + '.settings'
+import django
+django.setup()
+from django.contrib.auth import get_user_model
+User = get_user_model()
+u, _ = User.objects.get_or_create(username='admin')
+u.is_staff = u.is_superuser = True
+u.set_password(os.environ['ADMIN_PASSWORD'])
+u.save()</pre></div>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Setting Service Configuration Files</h2>
+
+<p>Next, we set the configuration file<a data-type="indexterm" data-primary="configuration files" data-secondary="setting for Mezzanine app deployed with Ansible"/><a data-type="indexterm" data-primary="Gunicorn (application server)" data-secondary="setting configuration file for"/><a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="configuration files for Gunicorn, Supervisor, and Nginx"/> for Gunicorn (our application server),
+Nginx (our web server), and Supervisor (our process manager), as shown in
+<a data-type="xref" href="#setting_service_config_files"/>. The template for the Gunicorn configuration
+file is shown in <a data-type="xref" href="#gunicorn_config_file_template"/>, and the template for the Supervisor configuration file is shown in <a data-type="xref" href="#template_supervisorconfj2"/>.</p>
+<div id="setting_service_config_files" data-type="example">
+<h5>Setting configuration files</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: set the gunicorn config file
+  template:
+      src: templates/gunicorn.conf.py.j2
+      dest: "{{ proj_path }}/gunicorn.conf.py"
+
+- name: set the supervisor config file
+  template:
+      src: templates/supervisor.conf.j2
+      dest: /etc/supervisor/conf.d/mezzanine.conf
+  become: True
+  notify: restart supervisor
+
+- name: set the nginx config file
+  template:
+      src: templates/nginx.conf.j2
+      dest: /etc/nginx/sites-available/mezzanine.conf
+  notify: restart nginx
+  become: True</pre></div>
+
+<p>In all three cases, we generate the config files by using templates.<a data-type="indexterm" data-primary="Supervisor (service manager)" data-secondary="setting configuration file for"/><a data-type="indexterm" data-primary="Nginx" data-secondary="web server for Mezzanine application" data-tertiary="setting configuration file for"/> The Supervisor and
+Nginx processes are started by root (although they drop down to nonroot users
+when running), so we need to <code>sudo</code> so that we have the appropriate permissions to
+write their configuration files.</p>
+
+<p>If the Supervisor config file changes, Ansible will fire the <code>restart
+supervisor</code> handler.<a data-type="indexterm" data-primary="handlers" data-secondary="for Nginx and Supervisor services in Mezzanine app"/> If the Nginx config file changes, Ansible will fire
+the <code>restart nginx</code> handler, as shown in <a data-type="xref" href="#mezzanine_handlers"/>.</p>
+<div id="mezzanine_handlers" data-type="example">
+<h5>Handlers</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">handlers:
+  - name: restart supervisor
+    supervisorctl: name=gunicorn_mezzanine state=restarted
+    sudo: True
+
+  - name: restart nginx
+    service: name=nginx state=restarted
+    sudo: True</pre></div>
+<div id="gunicorn_config_file_template" data-type="example">
+<h5>templates/gunicorn.conf.py.j2</h5>
+
+<pre data-type="programlisting" data-code-language="python">from __future__ import unicode_literals
+import multiprocessing
+
+bind = "127.0.0.1:{{ gunicorn_port }}"
+workers = multiprocessing.cpu_count() * 2 + 1
+loglevel = "error"
+proc_name = "{{ proj_name }}"</pre></div>
+<div id="template_supervisorconfj2" data-type="example">
+<h5>templates/supervisor.conf.j2</h5>
+
+<pre data-type="programlisting">[program:{{ gunicorn_procname }}]
+command={{ venv_path }}/bin/gunicorn -c gunicorn.conf.py -p gunicorn.pid \
+    {{ proj_app }}.wsgi:application
+directory={{ proj_path }}
+user={{ user }}
+autostart=true
+stdout_logfile = /home/{{ user }}/logs/{{ proj_name }}_supervisor
+autorestart=true
+redirect_stderr=true
+environment=LANG="{{ locale }}",LC_ALL="{{ locale }}",LC_LANG="{{ locale }}"</pre></div>
+
+<p>The only template that has any template logic (other than variable
+substitution) is <a data-type="xref" href="#nginx_conf_j2"/>.<a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="configuration files for Gunicorn, Supervisor, and Nginx" data-tertiary="if statement and join filter in Nginx file"/> It has conditional logic to enable TLS if the <code>tls_enabled</code> variable is set to <code>true</code>.  You&#8217;ll see some <code>if</code> statements scattered about the templates that look like this:</p>
+
+<pre data-type="programlisting">{% if tls_enabled %}
+...
+{% endif %}</pre>
+
+<p>It also uses the <code>join</code> Jinja2 filter here:</p>
+
+<pre data-type="programlisting">    server_name {{ domains|join(", ") }};</pre>
+
+<p>This code snippet expects the variable <code>domains</code> to be a list. It will generate
+a string with the elements of <code>domains</code> connected together, separated by commas.
+Recall that in our case, the <code>domains</code> list is defined as follows:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">domains:
+  - 192.168.33.10.xip.io
+  - www.192.168.33.10.xip.io</pre>
+
+<p class="pagebreak-before">When the template renders, the line looks like this:</p>
+
+<pre data-type="programlisting">server_name 192.168.33.10.xip.io, www.192.168.33.10.xip.io;</pre>
+<div id="nginx_conf_j2" data-type="example">
+<h5>templates/nginx.conf.j2</h5>
+
+<pre data-type="programlisting">upstream {{ proj_name }} {
+    server unix:{{ proj_path }}/gunicorn.sock fail_timeout=0;
+}
+
+server {
+
+    listen 80;
+
+    {% if tls_enabled %}
+    listen 443 ssl;
+    {% endif %}
+    server_name {{ domains|join(", ") }};
+    client_max_body_size 10M;
+    keepalive_timeout    15;
+
+    {% if tls_enabled %}
+    ssl_certificate      conf/{{ proj_name }}.crt;
+    ssl_certificate_key  conf/{{ proj_name }}.key;
+    ssl_session_cache    shared:SSL:10m;
+    ssl_session_timeout  10m;
+    # ssl_ciphers entry is too long to show in this book
+    # See https://github.com/ansiblebook/ansiblebook
+    #     ch06/playbooks/templates/nginx.conf.j2
+    ssl_prefer_server_ciphers on;
+    {% endif %}
+
+    location / {
+        proxy_redirect      off;
+        proxy_set_header    Host                    $host;
+        proxy_set_header    X-Real-IP               $remote_addr;
+        proxy_set_header    X-Forwarded-For         $proxy_add_x_forwarded_for;
+        proxy_set_header    X-Forwarded-Protocol    $scheme;
+        proxy_pass          http://{{ proj_name }};
+    }
+
+    location /static/ {
+        root            {{ proj_path }};
+        access_log      off;
+        log_not_found   off;
+    }
+
+    location /robots.txt {
+        root            {{ proj_path }}/static;
+        access_log      off;
+        log_not_found   off;
+    }
+
+    location /favicon.ico {
+        root            {{ proj_path }}/static/img;
+        access_log      off;
+        log_not_found   off;
+    }
+}</pre></div>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Enabling the Nginx Configuration</h1>
+
+<p>The convention with Nginx configuration files is to put your configuration files in <em>/etc/nginx/sites-available</em> and enable them by symlinking them into <em>/etc/nginx/sites-enabled</em>.<a data-type="indexterm" data-primary="Python" data-secondary="custom scripts, running in app&#x27;s virtualev context" data-startref="ix_Pycus"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="running custom Python scripts in app virtualenv context" data-startref="ix_MezdepcusPy"/><a data-type="indexterm" data-primary="Nginx" data-secondary="web server for Mezzanine application" data-tertiary="enabling configuration"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="enabling Nginx configuration"/></p>
+
+<p>The Mezzanine Fabric scripts just copy the configuration file directly into <em>sites-enabled</em>, but I&#8217;m going to deviate from how Mezzanine does it because it gives me an excuse to use the <code>file</code> module to create a symlink.<a data-type="indexterm" data-primary="file module" data-secondary="using to create a symlink"/><a data-type="indexterm" data-primary="symlinks"/> We also need to remove the default configuration file that the Nginx package sets up in <em>/etc/nginx/sites-enabled/default</em>.</p>
+
+<p>As shown in <a data-type="xref" href="#enabling_nginx_configuration"/>, we use the <code>file</code> module to create
+the symlink and to remove the default config file. This module is useful for
+creating directories, symlinks, and empty files; deleting files, directories, and symlinks; and setting properties such as permissions and ownership.</p>
+<div id="enabling_nginx_configuration" data-type="example">
+<h5>Enabling Nginx configuration</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: enable the nginx config file
+  file:
+    src: /etc/nginx/sites-available/mezzanine.conf
+    dest: /etc/nginx/sites-enabled/mezzanine.conf
+    state: link
+  become: True
+
+- name: remove the default nginx config file
+  file: path=/etc/nginx/sites-enabled/default state=absent
+  notify: restart nginx
+  become: True</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Installing TLS Certificates</h1>
+
+<p>Our playbook defines a variable named <code>tls_enabled</code>. If this variable is set to
+<code>true</code>, the playbook will install TLS certificates.<a data-type="indexterm" data-primary="TLS (Transport Layer Security)" data-secondary="installing TLS certificates in Mezzanine app"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="installing TLS certificates"/> In our example, we use
+self-signed certificates, so the playbook will create the certificate if it
+doesn&#8217;t exist.</p>
+
+<p>In a production deployment, you would copy an existing TLS certificate that you
+obtained from a certificate authority.</p>
+
+<p><a data-type="xref" href="#installing_tls_certificate"/> shows the two tasks involved in configuring for TLS certificates. We use the <code>file</code> module to ensure that the directory that will house the TLS certificates exists.<a data-type="indexterm" data-primary="file module" data-secondary="using to ensure directory for TLS certificates exists"/></p>
+<div id="installing_tls_certificate" data-type="example">
+<h5>Installing TLS certificates</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: ensure config path exists
+  file: path={{ conf_path }} state=directory
+  sudo: True
+  when: tls_enabled
+
+- name: create tls certificates
+  command: &gt;
+    openssl req -new -x509 -nodes -out {{ proj_name }}.crt
+    -keyout {{ proj_name }}.key -subj '/CN={{ domains[0] }}' -days 3650
+    chdir={{ conf_path }}
+    creates={{ conf_path }}/{{ proj_name }}.crt
+  sudo: True
+  when: tls_enabled
+  notify: restart nginx</pre></div>
+
+<p>Note that both tasks contain this clause:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">when: tls_enabled</pre>
+
+<p>If <code>tls_enabled</code> evaluates to <code>false</code>, Ansible will <a data-type="indexterm" data-primary="tls_enabled"/>skip the task.</p>
+
+<p>Ansible doesn&#8217;t ship with modules for creating TLS certificates, so we need to
+use the <code>command</code> module to invoke the <code>openssl</code> command in order to create the
+self-signed certificate. <a data-type="indexterm" data-primary="command module" data-secondary="invoking openssl command"/><a data-type="indexterm" data-primary="openssl command"/>Since the command is very long, we use YAML line-folding syntax (see <a data-type="xref" href="#line_folding"/>) so that we can break the command across
+multiple lines.</p>
+
+<p>These two lines at the end of the command are additional parameters that are passed to the module; they are not passed to the command line:</p>
+
+<pre data-type="programlisting">    chdir={{ conf_path }}
+    creates={{ conf_path }}/{{ proj_name }}.crt</pre>
+
+<p>The <code>chdir</code> parameter changes the directory before running the command. The <code>creates</code> parameter implements idempotence: Ansible will first check whether the file <code>{{ conf_path }}/{{ proj_name }}.crt</code> exists on the host.<a data-type="indexterm" data-primary="idempotence" data-secondary="implementing with creates parameter of openssl command"/> If it already exists, Ansible will skip this task.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Installing Twitter Cron Job</h1>
+
+<p>If you run <code>manage.py poll_twitter</code>, Mezzanine will retrieve tweets
+associated with the configured accounts and show them on the home page.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="installing Twitter cron job"/><a data-type="indexterm" data-primary="Twitter cron job, installing for Mezzanine app"/><a data-type="indexterm" data-primary="cron job (Twitter), installing for Mezzanine app"/> The Fabric scripts that ship with Mezzanine keep these tweets up-to-date by
+installing a cron job that runs every five minutes.</p>
+
+<p>If we followed the Fabric scripts exactly, we&#8217;d copy a cron script into the <em>/etc/cron.d</em>
+directory that had the cron job. We could use the <code>template</code> module to do this.
+However, Ansible ships with a <code>cron</code> module that allows us to create or delete
+cron jobs, which I find more elegant. <a data-type="xref" href="#twitter_cron_job"/> shows the task that
+installs the cron job.</p>
+<div id="twitter_cron_job" data-type="example">
+<h5>Installing cron job for polling Twitter</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install poll twitter cron job
+  cron: name="poll twitter" minute="*/5" user={{ user }} job="{{ manage }} \
+  poll_twitter"</pre></div>
+
+<p>If you manually SSH to the box, you can see the cron job that gets installed by using <code>crontab -l</code> to list the jobs. Here&#8217;s what it looks like for me when I deploy as the Vagrant user:</p>
+
+<pre data-type="programlisting">#Ansible: poll twitter
+*/5 * * * * /home/vagrant/.virtualenvs/mezzanine_example/bin/python \
+/home/vagrant/mezzanine/mezzanine_example/manage.py poll_twitter</pre>
+
+<p>Notice the comment at the first line. That&#8217;s how the Ansible module supports
+deleting cron jobs by name. If you were to do this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: remove cron job
+  cron: name="poll twitter" state=absent</pre>
+
+<p>the <code>cron</code> module would look for the comment line that matches the name and delete
+the job associated with that comment.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>The Full Playbook</h1>
+
+<p><a data-type="xref" href="#full_mezzanine_playbook"/> shows the complete playbook in all its glory.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="complete playbook"/><a data-type="indexterm" data-primary="playbooks" data-secondary="full Mezzanine playbook"/></p>
+<div id="full_mezzanine_playbook" data-type="example">
+<h5>mezzanine.yml: the complete playbook</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja"></pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Running the Playbook Against a Vagrant Machine</h1>
+
+<p>The <code>live_hostname</code> and <code>domains</code> variables in our playbook assume that the
+host we are going to deploy to is accessible at <em>192.168.33.10</em>.<a data-type="indexterm" data-primary="Vagrant" data-secondary="running  mezzanine.yml playbook against Vagrant machine"/><a data-type="indexterm" data-primary="playbooks" data-secondary="running  mezzanine.yml playbook against Vagrant machine"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="running playbook against a Vagrant machine"/> The
+Vagrantfile shown in <a data-type="xref" href="#ex-6-28"/> configures a Vagrant machine with that IP address.</p>
+<div id="ex-6-28" data-type="example">
+<h5>Vagrantfile</h5>
+
+<pre data-type="programlisting" data-code-language="ruby">VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.box = "ubuntu/trusty64"
+  config.vm.network "private_network", ip: "192.168.33.10"
+end</pre></div>
+
+<p>Deploy Mezzanine into the Vagrant machine:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook mezzanine.yml</pre>
+
+<p>You can then reach your newly deployed Mezzanine site at any of the following
+URLs:</p>
+
+<ul>
+<li>
+<p><a href="http://192.168.33.10.xip.io"><em class="hyperlink">http://192.168.33.10.xip.io</em></a></p>
+</li>
+<li>
+<p><a href="https://192.168.33.10.xip.io"><em class="hyperlink">https://192.168.33.10.xip.io</em></a></p>
+</li>
+<li>
+<p><a href="http://www.192.168.33.10.xip.io"><em class="hyperlink">http://www.192.168.33.10.xip.io</em></a></p>
+</li>
+<li>
+<p><a href="https://www.192.168.33.10.xip.io"><em class="hyperlink">https://www.192.168.33.10.xip.io</em></a></p>
+</li>
+</ul>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Troubleshooting</h1>
+
+<p>You might hit a few speed bumps when trying to run this playbook on
+your local machine.<a data-type="indexterm" id="ix_playbktrsh" data-primary="playbooks" data-secondary="troubleshooting completed Mezzanine playbook"/><a data-type="indexterm" id="ix_Mezdeptrsh" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="troubleshooting the playbook"/> This section describes how to overcome some common obstacles.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Cannot Check Out Git Repository</h2>
+
+<p>You may see the task named "check out the repository on the host" fail<a data-type="indexterm" data-primary="playbooks" data-secondary="troubleshooting completed Mezzanine playbook" data-tertiary="cannot check out Git repository"/><a data-type="indexterm" data-primary="Git repository, cannot check out error"/> with this error:</p>
+
+<pre data-type="programlisting">fatal: Could not read from remote repository.</pre>
+
+<p>A likely fix is to remove a preexisting entry for 192.168.33.10 in your
+<em>~/.ssh/known_hosts</em> file. See <a data-type="xref" href="#badhostkey_sb"/> for more details.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Cannot Reach 192.168.33.10.xip.io</h2>
+
+<p>Some WiFi routers ship with DNS servers that won&#8217;t resolve the hostname <em>192.168.33.10.xip.io</em>.
+You can check whether yours does <a data-type="indexterm" data-primary="playbooks" data-secondary="troubleshooting completed Mezzanine playbook" data-tertiary="Cannot Reach 192.168.33.10.xip.io"/><a data-type="indexterm" data-primary="DNS" data-secondary="servers not able to resolve 192.168.33.10.xip.io hostname"/>by typing on the command line:</p>
+
+<pre data-type="programlisting">dig +short 192.168.33.10.xip.io</pre>
+
+<p>The output should be as follows:</p>
+
+<pre data-type="programlisting">192.168.33.10</pre>
+
+<p>If the output is blank, your DNS server is refusing to resolve <em>xip.io</em>
+hostnames.<a data-type="indexterm" data-primary="xip.io" data-secondary="DNS server failing to resolve hostnames"/> If this is the case, a workaround is to add the following to your
+<em>/etc/hosts</em> file:</p>
+
+<pre data-type="programlisting">192.168.33.10 192.168.33.10.xip.io</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Bad Request (400)</h2>
+
+<p>If your browser returns the error "Bad Request (400)," it is likely that you are<a data-type="indexterm" data-primary="playbooks" data-secondary="troubleshooting completed Mezzanine playbook" data-tertiary="Bad Request (400) error"/>
+trying to reach the Mezzanine site by using a hostname or IP address that is not in
+the <code>ALLOWED_HOSTS</code> list in the Mezzanine configuration file. This list is
+populated using the <code>domains</code> Ansible variable in the playbook:</p>
+
+<pre data-type="programlisting">    domains:
+      - 192.168.33.10.xip.io
+      - www.192.168.33.10.xip.io</pre>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Deploying Mezzanine on Multiple Machines</h1>
+
+<p>In this scenario, we&#8217;ve deployed Mezzanine entirely on a single machine.
+However, it&#8217;s common to deploy the database service on a separate host from the
+web service. In <a data-type="xref" href="#roles"/>, we&#8217;ll show a playbook that deploys across the
+database and web services on separate hosts.</p>
+
+<p>You&#8217;ve now seen what it&#8217;s like to deploy a real application with Mezzanine. The next chapter covers some more advanced features of Ansible that didn&#8217;t
+come up in our example<a data-type="indexterm" data-primary="playbooks" data-secondary="troubleshooting completed Mezzanine playbook" data-startref="ix_playbktrsh"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-tertiary="troubleshooting the playbook" data-startref="ix_Mezdeptrsh"/>.<a data-type="indexterm" data-primary="Mezzanine" data-secondary="deploying with Ansible" data-startref="ix_Mezdep"/></p>
+</section>
+
+
+
+
+
+
+
+</section>

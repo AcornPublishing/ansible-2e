@@ -1,0 +1,892 @@
+<section data-type="chapter" id="roles">
+<h1>Roles: Scaling Up Your Playbooks</h1>
+
+
+<p>One of the things I like about Ansible is how it scales both up and down.
+I&#8217;m not referring to the number of hosts you&#8217;re managing, but
+rather the complexity of the jobs you&#8217;re trying to automate.<a data-type="indexterm" id="ix_role" data-primary="roles"/></p>
+
+<p>Ansible scales down well because simple tasks are easy to implement.<a data-type="indexterm" data-primary="scaling" data-secondary="Ansible&#x27;s up and down scalability"/> It scales up well
+because it provides mechanisms for decomposing complex jobs into smaller pieces.</p>
+
+<p>In Ansible, the <em>role</em> is the primary mechanism for breaking a playbook
+into multiple files. This simplifies writing complex playbooks, and it
+makes them easier to reuse. Think of a role
+as something you assign to one or more hosts. For example, you&#8217;d assign a
+<code>database</code> role to the hosts that will act as database servers.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Basic Structure of a Role</h1>
+
+<p>An Ansible role has a name, such as <code>database</code>. <a data-type="indexterm" data-primary="roles" data-secondary="basic structure"/><a data-type="indexterm" data-primary="names" data-secondary="of roles"/>Files associated with the <code>database</code> role go in the <em>roles/database</em> directory, which contains the following files and directories:</p>
+<dl>
+<dt>roles/database/tasks/main.yml</dt>
+<dd>
+<p>Tasks</p>
+</dd>
+<dt>roles/database/files/</dt>
+<dd>
+<p>Holds files to be uploaded to hosts</p>
+</dd>
+<dt>roles/database/templates/</dt>
+<dd>
+<p>Holds Jinja2 template files</p>
+</dd>
+<dt>roles/database/handlers/main.yml</dt>
+<dd>
+<p>Handlers</p>
+</dd>
+<dt>roles/database/vars/main.yml</dt>
+<dd>
+<p>Variables that shouldn&#8217;t be overridden</p>
+</dd>
+<dt>roles/database/defaults/main.yml</dt>
+<dd>
+<p>Default variables that can be overridden</p>
+</dd>
+<dt>roles/database/meta/main.yml</dt>
+<dd>
+<p>Dependency information about a role</p>
+</dd>
+</dl>
+
+<p>Each individual file is optional; if your role doesn&#8217;t have any handlers, there&#8217;s no need to have an empty <em>handlers/main.yml</em>  file.<a data-type="indexterm" data-primary="handlers" data-secondary="for roles"/></p>
+<aside id="WHERE_ROLES" data-type="sidebar">
+<h5>Where Does Ansible Look for My Roles?</h5>
+<p>Ansible looks for roles in the <em>roles</em> directory alongside your
+playbooks. It also looks for systemwide roles in <em>/etc/ansible/roles</em>.<a data-type="indexterm" data-primary="systemwide roles"/><a data-type="indexterm" data-primary="roles_path setting"/><a data-type="indexterm" data-primary="ansible.cfg file" data-secondary="roles_path setting"/><a data-type="indexterm" data-primary="paths" data-secondary="roles_path setting"/> You can customize the systemwide location of roles by setting the <em>roles_path</em> setting in the <code>defaults</code> section of your <em>ansible.cfg</em> file, as shown in <a data-type="xref" href="#overriding_roles_path"/>.</p>
+<div id="overriding_roles_path" data-type="example">
+<h5>ansible.cfg: overriding default roles path</h5>
+
+<pre data-type="programlisting" data-code-language="ini">[defaults]
+roles_path = ~/ansible_roles</pre></div>
+
+<p>You can also override this by setting the <code>ANSIBLE_ROLES_PATH</code> environment variable.<a data-type="indexterm" data-primary="ANSIBLE_ROLES_PATH environment variable"/></p>
+</aside>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Example: Database and Mezzanine Roles</h1>
+
+<p>Let&#8217;s take our Mezzanine playbook and implement it with Ansible roles. <a data-type="indexterm" data-primary="roles" data-secondary="example, database and mezzanine roles"/>We could create a single role called <code>mezzanine</code>, but instead I&#8217;m going to break out the deployment of the Postgres database into a separate role called <code>database</code>.<a data-type="indexterm" data-primary="database role"/><a data-type="indexterm" data-primary="mezzanine role"/> This will make it easier to eventually deploy the database on a host separate from the Mezzanine <span class="keep-together">application</span>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Using Roles in Your Playbooks</h1>
+
+<p>Before we get into the details of how to define roles, let&#8217;s go over how
+to <a data-type="indexterm" id="ix_roleplaybk" data-primary="roles" data-secondary="using in playbooks"/><a data-type="indexterm" id="ix_playbkrole" data-primary="playbooks" data-secondary="using roles in"/>assign roles to hosts in a playbook. <a data-type="xref" href="#mezzanine_with_roles"/> shows what our playbook looks like for deploying Mezzanine onto a single host, once we have database and Mezzanine roles defined.</p>
+<div id="mezzanine_with_roles" data-type="example">
+<h5>mezzanine-single-host.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: deploy mezzanine on vagrant
+  hosts: web
+  vars_files:
+    - secrets.yml
+
+  roles:
+    - role: database
+      database_name: "{{ mezzanine_proj_name }}"
+      database_user: "{{ mezzanine_proj_name }}"
+
+    - role: mezzanine
+      live_hostname: 192.168.33.10.xip.io
+      domains:
+        - 192.168.33.10.xip.io
+        - www.192.168.33.10.xip.io</pre></div>
+
+<p>When we use roles, we have a <code>roles</code> section in our playbook. This section expects a list of roles. In our example, our list contains two roles: <code>database</code> and <code>mezzanine</code>.</p>
+
+<p>Note that we can pass in variables when invoking the roles. In our example, we pass the <code>database_name</code> and <code>database_user</code> variables for the <code>database</code> role. If these variables have already been defined in the role (either in <em>vars/main.yml</em> or <em>defaults/main.yml</em>), then the values will be overridden with the variables that were passed in.</p>
+
+<p>If you aren&#8217;t passing in variables to roles, you can simply specify
+the names of the roles, like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">roles:
+ - database
+ - mezzanine</pre>
+
+<p>With <code>database</code> and <code>mezzanine</code> roles defined, writing a playbook that deploys the web application and database services to multiple hosts becomes much simpler. <a data-type="xref" href="#mezzanine_across_hosts"/> shows a playbook that deploys the database on the <code>db</code> host and the web service on the <code>web</code> host. Note that this playbook contains two separate plays.</p>
+<div id="mezzanine_across_hosts" data-type="example">
+<h5>mezzanine-across-hosts.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: deploy postgres on vagrant
+  hosts: db
+  vars_files:
+    - secrets.yml
+  roles:
+    - role: database
+      database_name: "{{ mezzanine_proj_name }}"
+      database_user: "{{ mezzanine_proj_name }}"
+
+- name: deploy mezzanine on vagrant
+  hosts: web
+  vars_files:
+    - secrets.yml
+  roles:
+    - role: mezzanine
+      database_host: "{{ hostvars.db.ansible_eth1.ipv4.address }}"
+      live_hostname: 192.168.33.10.xip.io
+      domains:
+        - 192.168.33.10.xip.io
+        - www.192.168.33.10.xip.io</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Pre-Tasks and Post-Tasks</h1>
+
+<p>Sometimes you want to run tasks before or after you invoke your roles.<a data-type="indexterm" data-primary="roles" data-secondary="using in playbooks" data-startref="ix_roleplaybk"/><a data-type="indexterm" data-primary="playbooks" data-secondary="using roles in" data-startref="ix_playbkrole"/>
+Let&#8217;s say you want to update the apt cache before you deploy Mezzanine, and you
+want to send a notification to a Slack channel after you deploy.<a data-type="indexterm" data-primary="tasks" data-secondary="pre_tasks and post_tasks"/><a data-type="indexterm" data-primary="roles" data-secondary="tasks executing before or after roles"/></p>
+
+<p>Ansible allows you to define a list of tasks that execute before the roles with a <code>pre_tasks</code> section,<a data-type="indexterm" data-primary="pre_tasks"/><a data-type="indexterm" data-primary="post_tasks"/> and a list of tasks that execute after the roles with a <code>post_tasks</code> section. <a data-type="xref" href="#pre_tasks_figure"/> shows an example of these in action.</p>
+<div id="pre_tasks_figure" data-type="example">
+<h5>Using pre-tasks and post-tasks</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: deploy mezzanine on vagrant
+  hosts: web
+  vars_files:
+    - secrets.yml
+  pre_tasks:
+    - name: update the apt cache
+      apt: update_cache=yes
+  roles:
+    - role: mezzanine
+      database_host: "{{ hostvars.db.ansible_eth1.ipv4.address }}"
+      live_hostname: 192.168.33.10.xip.io
+      domains:
+        - 192.168.33.10.xip.io
+        - www.192.168.33.10.xip.io
+  post_tasks:
+    - name: notify Slack that the servers have been updated
+      local_action: &gt;
+        slack
+        domain=acme.slack.com
+        token={{ slack_token }}
+        msg="web server {{ inventory_hostname }} configured"</pre></div>
+
+<p>But enough about using roles; let&#8217;s talk about writing them.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>A database Role for Deploying the Database</h1>
+
+<p>The job of our <code>database</code> role will be to install Postgres and create the
+required database and database user.<a data-type="indexterm" id="ix_PgSQLdbrole" data-primary="PostgreSQL" data-secondary="database role for deploying the database"/><a data-type="indexterm" id="ix_roledb" data-primary="roles" data-secondary="database role for deploying the database"/><a data-type="indexterm" id="ix_dbrole" data-primary="databases" data-secondary="database role for deploying the database"/></p>
+
+<p>Our database role comprises the following files:</p>
+
+<ul>
+<li>
+<p><em>roles/database/tasks/main.yml</em></p>
+</li>
+<li>
+<p><em>roles/database/defaults/main.yml</em></p>
+</li>
+<li>
+<p><em>roles/database/handlers/main.yml</em></p>
+</li>
+<li>
+<p><em>roles/database/files/pg_hba.conf</em></p>
+</li>
+<li>
+<p><em>roles/database/files/postgresql.conf</em></p>
+</li>
+</ul>
+
+<p>This role includes two customized Postgres configuration files:</p>
+<dl>
+<dt>postgresql.conf</dt>
+<dd>
+<p>Modifies the default <code>listen_addresses</code> configuration option so that Postgres will accept connections on any network interface. The default for Postgres is to accept connections only from <code>localhost</code>, which doesn&#8217;t work for us if we want our database to run on a separate host from our web application.</p>
+</dd>
+<dt>pg_hba.conf</dt>
+<dd>
+<p>Configures Postgres to authenticate connections over the network by using a username and password.</p>
+</dd>
+</dl>
+<div data-type="note">
+<p>These files aren&#8217;t shown here
+because they are quite large. You can find them in the code samples on
+<a href="https://github.com/ansiblebook/ansiblebook">GitHub</a> in the <em>ch08</em> directory.</p>
+</div>
+
+<p><a data-type="xref" href="#database_role_tasks"/> shows the tasks involved in deploying Postgres.</p>
+<div id="database_role_tasks" data-type="example">
+<h5>roles/database/tasks/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install apt packages
+  apt: pkg={{ item }} update_cache=yes cache_valid_time=3600
+  become: True
+  with_items:
+    - libpq-dev
+    - postgresql
+    - python-psycopg2
+
+- name: copy configuration file
+  copy: &gt;
+    src=postgresql.conf dest=/etc/postgresql/9.3/main/postgresql.conf
+    owner=postgres group=postgres mode=0644
+  become: True
+  notify: restart postgres
+
+- name: copy client authentication configuration file
+  copy: &gt;
+    src=pg_hba.conf dest=/etc/postgresql/9.3/main/pg_hba.conf
+    owner=postgres group=postgres mode=0640
+  become: True
+  notify: restart postgres
+
+- name: create project locale
+  locale_gen: name={{ locale }}
+  become: True
+
+- name: create a user
+  postgresql_user:
+    name: "{{ database_user }}"
+    password: "{{ db_pass }}"
+  become: True
+  become_user: postgres
+
+- name: create the database
+  postgresql_db:
+    name: "{{ database_name }}"
+    owner: "{{ database_user }}"
+    encoding: UTF8
+    lc_ctype: "{{ locale }}"
+    lc_collate: "{{ locale }}"
+    template: template0
+  become: True
+  become_user: postgres</pre></div>
+
+<p><a data-type="xref" href="#roles_handlers"/> shows the handlers file.<a data-type="indexterm" data-primary="handlers" data-secondary="for database role"/></p>
+<div id="roles_handlers" data-type="example">
+<h5>roles/database/handlers/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: restart postgres
+  service: name=postgresql state=restarted
+  become: True</pre></div>
+
+<p>The only default variable we are going to specify is the database port, shown in
+<a data-type="xref" href="#database_role_default"/>.</p>
+<div id="database_role_default" data-type="example">
+<h5>roles/database/defaults/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">database_port: 5432</pre></div>
+
+<p>Note that our list of tasks refers to several variables that we haven&#8217;t
+defined anywhere in the role:</p>
+
+<ul>
+<li>
+<p><code>database_name</code></p>
+</li>
+<li>
+<p><code>database_user</code></p>
+</li>
+<li>
+<p><code>db_pass</code></p>
+</li>
+<li>
+<p><code>locale</code></p>
+</li>
+</ul>
+
+<p>In Examples <a href="#mezzanine_with_roles">7-2</a> and <a href="#mezzanine_across_hosts">7-3</a>, we pass
+in <code>database_name</code> and <code>database_user</code> when we invoke the role. I&#8217;m assuming that <code>db_pass</code> is defined in the <em>secrets.yml</em> file, which is included in the <code>vars_files</code> section. The <code>locale</code> variable is likely something that would be the same for every host, and might be used by multiple roles or playbooks, so I defined it in the <em>group_vars/all</em> file in the code samples that accompany this
+book.<a data-type="indexterm" data-primary="PostgreSQL" data-secondary="database role for deploying the database" data-startref="ix_PgSQLdbrole"/><a data-type="indexterm" data-primary="roles" data-secondary="database role for deploying the database" data-startref="ix_roledb"/><a data-type="indexterm" data-primary="databases" data-secondary="database role for deploying the database" data-startref="ix_dbrole"/></p>
+<aside data-type="sidebar">
+<h5>Why Are There Two Ways to Define Variables in Roles?</h5>
+<p>When Ansible first introduced support for roles, there was only one place to
+define role variables, in <em>vars/main.yml</em>.<a data-type="indexterm" data-primary="roles" data-secondary="defining variables in"/><a data-type="indexterm" data-primary="variables" data-secondary="defined in roles"/> Variables defined in this
+location have a higher precedence than those defined in the <code>vars</code> section of
+a play, which meant you couldn&#8217;t override the variable unless you
+explicitly passed it as an argument to the role.</p>
+
+<p>Ansible later introduced the notion of default role variables that go in
+<em>defaults/main.yml</em>.<a data-type="indexterm" data-primary="default role variables"/> This type of variable is defined in a role, but has a low
+precedence, so it will be overridden if another variable with the same name is
+defined in the playbook.</p>
+
+<p>If you think you might want to change the value of a variable in a role, use a
+default variable. If you don&#8217;t want it to change, use a regular
+variable.</p>
+</aside>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>A mezzanine Role for Deploying Mezzanine</h1>
+
+<p>The job of our <code>mezzanine</code> role will be to install Mezzanine.<a data-type="indexterm" id="ix_Mezrole" data-primary="Mezzanine" data-secondary="mezzanine role for deploying Mezzanine"/><a data-type="indexterm" id="ix_rolemez" data-primary="roles" data-secondary="mezzanine role for deploying Mezzanine"/> This includes installing Nginx as the reverse proxy and Supervisor as the process monitor.</p>
+
+<p>Here are the files that the role comprises:</p>
+
+<ul>
+<li>
+<p><em>roles/mezzanine/defaults/main.yml</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/handlers/main.yml</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/tasks/django.yml</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/tasks/main.yml</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/tasks/nginx.yml</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/templates/gunicorn.conf.py.j2</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/templates/local_settings.py.filters.j2</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/templates/local_settings.py.j2</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/templates/nginx.conf.j2</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/templates/supervisor.conf.j2</em></p>
+</li>
+<li>
+<p><em>roles/mezzanine/vars/main.yml</em></p>
+</li>
+</ul>
+
+<p><a data-type="xref" href="#mezzanine_vars_main"/> shows the variables we&#8217;ve defined for this role.
+Note that we&#8217;ve changed the name of the variables so that they all start with
+<em>mezzanine</em>.<a data-type="indexterm" data-primary="variables" data-secondary="defined for mezzanine role"/> It&#8217;s good practice to do this with role variables because Ansible
+doesn&#8217;t have any notion of namespace across roles. This means that variables
+that are defined in other roles, or elsewhere in a playbook, will be accessible
+everywhere. This can cause some unexpected behavior if you accidentally use the
+same variable name in two different roles.</p>
+<div id="mezzanine_vars_main" data-type="example">
+<h5>roles/mezzanine/vars/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja"># vars file for mezzanine
+mezzanine_user: "{{ ansible_user }}"
+mezzanine_venv_home: "{{ ansible_env.HOME }}"
+mezzanine_venv_path: "{{ mezzanine_venv_home }}/{{ mezzanine_proj_name }}"
+mezzanine_repo_url: git@github.com:lorin/mezzanine-example.git
+mezzanine_proj_dirname: project
+mezzanine_proj_path: "{{ mezzanine_venv_path }}/{{ mezzanine_proj_dirname }}"
+mezzanine_reqs_path: requirements.txt
+mezzanine_conf_path: /etc/nginx/conf
+mezzanine_python: "{{ mezzanine_venv_path }}/bin/python"
+mezzanine_manage: "{{ mezzanine_python }} {{ mezzanine_proj_path }}/manage.py"
+mezzanine_gunicorn_port: 8000</pre></div>
+
+<p><a data-type="xref" href="#mezzanine_defaults_main"/> shows the default variables defined in our
+<code>mezzanine</code> role. <a data-type="indexterm" data-primary="default role variables" data-secondary="defined for mezzanine role"/>In this case, we have only a single variable. When I write default variables, I&#8217;m less likely to prefix them because I might intentionally want to override them elsewhere.</p>
+<div id="mezzanine_defaults_main" data-type="example">
+<h5>roles/mezzanine/defaults/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">tls_enabled: True</pre></div>
+
+<p>Because the task list is pretty long, I&#8217;ve decided to break it up across several files. <a data-type="xref" href="#mezzanine_tasks_main"/> shows the top-level task file for the <code>mezzanine</code> role.<a data-type="indexterm" data-primary="tasks" data-secondary="for mezzanine role"/> It installs the apt packages, and then it uses <code>include</code> statements to invoke two other task files that are in the same directory, shown in Examples <a href="#mezzanine_tasks_django">7-11</a> and <a  href="#mezzanine_tasks_nginx">7-12</a>.</p>
+<div id="mezzanine_tasks_main" data-type="example">
+<h5>roles/mezzanine/tasks/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install apt packages
+  apt: pkg={{ item }} update_cache=yes cache_valid_time=3600
+  become: True
+  with_items:
+    - git
+    - libjpeg-dev
+    - libpq-dev
+    - memcached
+    - nginx
+    - python-dev
+    - python-pip
+    - python-psycopg2
+    - python-setuptools
+    - python-virtualenv
+    - supervisor
+
+- include: django.yml
+
+- include: nginx.yml</pre></div>
+<div id="mezzanine_tasks_django" data-type="example">
+<h5>roles/mezzanine/tasks/django.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create a logs directory
+  file: path="{{ ansible_env.HOME }}/logs" state=directory
+
+- name: check out the repository on the host
+  git:
+    repo: "{{ mezzanine_repo_url }}"
+    dest: "{{ mezzanine_proj_path }}"
+    accept_hostkey: yes
+
+- name: install Python requirements globally via pip
+  pip: name={{ item }} state=latest
+  with_items:
+    - pip
+    - virtualenv
+    - virtualenvwrapper
+
+- name: install required python packages
+  pip: name={{ item }} virtualenv={{ mezzanine_venv_path }}
+  with_items:
+    - gunicorn
+    - setproctitle
+    - psycopg2
+    - django-compressor
+    - python-memcached
+
+- name: install requirements.txt
+  pip: &gt;
+    requirements={{ mezzanine_proj_path }}/{{ mezzanine_reqs_path }}
+    virtualenv={{ mezzanine_venv_path }}
+
+- name: generate the settings file
+  template: src=local_settings.py.j2 dest={{ mezzanine_proj_path }}/local_settings.py
+
+- name: apply migrations to create the database, collect static content
+  django_manage:
+    command: "{{ item }}"
+    app_path: "{{ mezzanine_proj_path }}"
+    virtualenv: "{{ mezzanine_venv_path }}"
+  with_items:
+    - migrate
+    - collectstatic
+
+- name: set the site id
+  script: scripts/setsite.py
+  environment:
+    PATH: "{{ mezzanine_venv_path }}/bin"
+    PROJECT_DIR: "{{ mezzanine_proj_path }}"
+    PROJECT_APP: "{{ mezzanine_proj_app }}"
+    WEBSITE_DOMAIN: "{{ live_hostname }}"
+
+- name: set the admin password
+  script: scripts/setadmin.py
+  environment:
+    PATH: "{{ mezzanine_venv_path }}/bin"
+    PROJECT_DIR: "{{ mezzanine_proj_path }}"
+    PROJECT_APP: "{{ mezzanine_proj_app }}"
+    ADMIN_PASSWORD: "{{ admin_pass }}"
+
+- name: set the gunicorn config file
+  template: src=gunicorn.conf.py.j2 dest={{ mezzanine_proj_path }}/gunicorn.conf.py
+
+- name: set the supervisor config file
+  template: src=supervisor.conf.j2 dest=/etc/supervisor/conf.d/mezzanine.conf
+  become: True
+  notify: restart supervisor
+
+- name: ensure config path exists
+  file: path={{ mezzanine_conf_path }} state=directory
+  become: True
+  when: tls_enabled
+
+- name: install poll twitter cron job
+  cron: &gt;
+    name="poll twitter" minute="*/5" user={{ mezzanine_user }}
+    job="{{ mezzanine_manage }} poll_twitter"</pre></div>
+<div id="mezzanine_tasks_nginx" data-type="example">
+<h5>roles/mezzanine/tasks/nginx.yml</h5>
+
+<pre data-type="programlisting">- name: set the nginx config file
+  template: src=nginx.conf.j2 dest=/etc/nginx/sites-available/mezzanine.conf
+  notify: restart nginx
+  become: True
+
+- name: enable the nginx config file
+  file:
+    src: /etc/nginx/sites-available/mezzanine.conf
+    dest: /etc/nginx/sites-enabled/mezzanine.conf
+    state: link
+  notify: restart nginx
+  become: True
+
+- name: remove the default nginx config file
+  file: path=/etc/nginx/sites-enabled/default state=absent
+  notify: restart nginx
+  become: True
+
+- name: create tls certificates
+  command: &gt;
+    openssl req -new -x509 -nodes -out {{ mezzanine_proj_name }}.crt
+    -keyout {{ mezzanine_proj_name }}.key -subj '/CN={{ domains[0] }}' -days 3650
+    chdir={{ mezzanine_conf_path }}
+    creates={{ mezzanine_conf_path }}/{{ mezzanine_proj_name }}.crt
+  become: True
+  when: tls_enabled
+  notify: restart nginx</pre></div>
+
+<p>There&#8217;s one important difference between tasks defined in a role and tasks defined in a regular playbook, and that&#8217;s when using the <code>copy</code> or <code>template</code> modules.<a data-type="indexterm" data-primary="copy module" data-secondary="tasks defined in roles versus playbooks"/><a data-type="indexterm" data-primary="template module" data-secondary="invoked on tasks defined in roles"/></p>
+
+<p>When invoking <code>copy</code> in a task defined in a role, Ansible will first check the <em>rolename/files/</em> directory for the location of the file to copy. Similarly, when invoking <code>template</code> in a task defined in a role, Ansible will first check the <em>rolename/templates</em> directory for the location of the template to use.</p>
+
+<p>This means that a task that used to look like this in a playbook:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: set the nginx config file
+  template: src=templates/nginx.conf.j2 \
+  dest=/etc/nginx/sites-available/mezzanine.conf</pre>
+
+<p>now looks like this when invoked from inside the role (note the change of the <code>src</code> parameter):</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: set the nginx config file
+  template: src=nginx.conf.j2 dest=/etc/nginx/sites-available/mezzanine.conf
+  notify: restart nginx</pre>
+
+<p><a data-type="xref" href="#mezzanine_handlers_roles"/> shows the <a data-type="indexterm" data-primary="handlers" data-secondary="for mezzanine role"/>handlers file.</p>
+<div id="mezzanine_handlers_roles" data-type="example">
+<h5>roles/mezzanine/handlers/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: restart supervisor
+  supervisorctl: name=gunicorn_mezzanine state=restarted
+  become: True
+
+- name: restart nginx
+  service: name=nginx state=restarted
+  become: True</pre></div>
+
+<p>I won&#8217;t show the template files here, since they&#8217;re basically the same as in the
+previous chapter, although some of the variable names have changed. Check out the
+accompanying <a href="http://github.com/ansiblebook/ansiblebook">code samples</a> for details.<a data-type="indexterm" data-primary="roles" data-secondary="mezzanine role for deploying Mezzanine" data-startref="ix_rolemez"/><a data-type="indexterm" data-primary="Mezzanine" data-secondary="mezzanine role for deploying Mezzanine" data-startref="ix_Mezrole"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Creating Role Files and Directories with ansible-galaxy</h1>
+
+<p>Ansible ships with another command-line tool we haven&#8217;t talked about yet, <code>ansible-galaxy</code>. <a data-type="indexterm" data-primary="roles" data-secondary="creating role files and directories with ansible-galaxy"/><a data-type="indexterm" data-primary="ansible-galaxy command-line tool" data-secondary="creating role files and directories with"/>Its primary purpose is to download roles that have been shared by the Ansible community (more on that later in the chapter). But it can also be used to generate <em>scaffolding</em>, an <a data-type="indexterm" data-primary="scaffolding"/>initial set of files and directories involved in a role:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">$ ansible-galaxy init -p playbooks/roles web</pre>
+
+<p>The <code>-p</code> flag tells <code>ansible-galaxy</code> where your roles directory is. If you don&#8217;t
+specify it, the role files will be created in your current directory.</p>
+
+<p>Running the command creates the following files and directories:</p>
+
+<pre data-type="programlisting">playbooks
+└── roles
+    └── web
+        ├── README.md
+        ├── defaults
+        │   └── main.yml
+        ├── files
+        ├── handlers
+        │   └── main.yml
+        ├── meta
+        │   └── main.yml
+        ├── tasks
+        │   └── main.yml
+        ├── templates
+        ├── tests
+        │   ├── inventory
+        │   └── test.yml
+        └── vars
+            └── main.yml</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" id="dependent_roles">
+<h1>Dependent Roles</h1>
+
+<p>Imagine that we have two roles, <code>web</code> and <code>database</code>, that both require an NTP<span data-type="footnote"><em>NTP</em> stands for <em>Network Time Protocol</em>, used for synchronizing clocks.</span> server to be installed on the host.<a data-type="indexterm" data-primary="roles" data-secondary="dependent"/> We could specify the installation of the NTP server in both the <code>web</code> and <code>database</code> roles, but that would result in duplication. We could create a separate <code>ntp</code> role, but then we would have to remember that whenever we apply the <code>web</code> or <code>database</code> role to a host, we have to apply the <code>ntp</code> role as well. This would avoid the duplication, but it&#8217;s error-prone because we might forget to specify the <code>ntp</code> role. What we really want is to
+have an <code>ntp</code> role that is always applied to a host whenever we apply the <code>web</code> role or the <code>database</code> role.<a data-type="indexterm" data-primary="dependent roles"/></p>
+
+<p>Ansible supports a feature called <em>dependent roles</em> to deal with this scenario.
+When you define a role, you can specify that it depends on one or more other
+roles. Ansible will ensure that roles that are specified as dependencies are
+executed first.</p>
+
+<p>Continuing with our example, let&#8217;s say that we create an <code>ntp</code> role that
+configures a host to synchronize its time with an NTP server. Ansible
+allows us to pass parameters to dependent roles, so let&#8217;s also assume
+that we can pass the NTP server as a parameter to that role.</p>
+
+<p>We specify that the <code>web</code> role depends on the <code>ntp</code> role by creating a
+<em>roles/web/meta/main.yml</em> file and listing <code>ntp</code> as a role, with a parameter, as
+shown in <a data-type="xref" href="#role_dependencies_example"/>.</p>
+<div id="role_dependencies_example" data-type="example">
+<h5>roles/web/meta/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">dependencies:
+    - { role: ntp, ntp_server=ntp.ubuntu.com }</pre></div>
+
+<p>We can also specify multiple dependent roles. For example, if we have a
+<code>django</code> role for setting up a Django web server, and we want to specify <code>nginx</code>
+and <code>memcached</code> as dependent roles, then the role metadata file might look like
+<a data-type="xref" href="#role_multiple_dependencies"/>.</p>
+<div id="role_multiple_dependencies" data-type="example">
+<h5>roles/django/meta/main.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">dependencies:
+    - { role: web }
+    - { role: memcached }</pre></div>
+
+<p>For details on how Ansible evaluates the role dependencies, check out the <a href="http://bit.ly/1F6tH9a">official Ansible documentation on role dependencies</a>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Ansible Galaxy</h1>
+
+<p>If you need to deploy an open source software system onto your hosts, chances are somebody has already written an Ansible role to do it. Although Ansible does make it easier to write scripts for deploying software, some systems are just plain tricky to deploy.<a data-type="indexterm" id="ix_roleAG" data-primary="roles" data-secondary="Ansible Galaxy"/><a data-type="indexterm" id="ix_AnsGal" data-primary="Ansible Galaxy"/></p>
+
+<p>Whether you want to reuse a role somebody has already written, or you just want
+to see how someone else solved the problem you&#8217;re working on, Ansible Galaxy can help you out. <em>Ansible Galaxy</em> is an open source repository of
+Ansible roles contributed by the Ansible community. The roles themselves are
+stored on GitHub.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Web Interface</h2>
+
+<p>You can explore the available roles on the <a href="http://galaxy.ansible.com">Ansible Galaxy site</a>.<a data-type="indexterm" data-primary="Ansible Galaxy" data-secondary="web interface"/>
+Galaxy supports freetext searching and browsing by category or contributor.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Command-Line Interface</h2>
+
+<p>The <code>ansible-galaxy</code> command-line tool allows you to download roles from Ansible Galaxy.<a data-type="indexterm" data-primary="ansible-galaxy command-line tool"/><a data-type="indexterm" data-primary="Ansible Galaxy" data-secondary="command-line tool"/></p>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Installing a role</h3>
+
+<p>Let&#8217;s say I want to install the role named <code>ntp</code>, written by GitHub
+user <em>bennojoy</em>. This is a role that will configure a host
+to synchronize its clock with an NTP server.<a data-type="indexterm" data-primary="ansible-galaxy command-line tool" data-secondary="ansible-galaxy install command"/></p>
+
+<p>Install the role with the <code>install</code> command:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-galaxy install -p ./roles bennojoy.ntp</pre>
+
+<p>The <code>ansible-galaxy</code> program will install roles to your systemwide location by default (see <a data-type="xref" href="#WHERE_ROLES"/>), which we overrode in the preceding example with the <code>-p</code> flag.</p>
+
+<p>The output should look like this:</p>
+
+<pre data-type="programlisting"> downloading role 'ntp', owned by bennojoy
+ no version specified, installing master
+ - downloading role from https://github.com/bennojoy/ntp/archive/master.tar.gz
+ - extracting bennojoy.ntp to ./roles/bennojoy.ntp
+write_galaxy_install_info!
+bennojoy.ntp was installed successfully</pre>
+
+<p>The <code>ansible-galaxy</code> tool will install the role files to <em>roles/bennojoy.ntp</em>.</p>
+
+<p>Ansible will install some metadata about the installation to the
+<em>./roles/bennojoy.ntp/meta/.galaxy_install_info</em> file. On my machine, that file
+contains the following:</p>
+
+<pre data-type="programlisting">{install_date: 'Sat Oct  4 20:12:58 2014', version: master}</pre>
+<div data-type="note">
+<p>The <em>bennojoy.ntp</em> role does not have a specific version number, so the version is simply listed as <code>master</code>. Some roles will have a specific version number, such as 1.2.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Listing installed roles</h3>
+
+<p>You can list installed roles<a data-type="indexterm" data-primary="ansible-galaxy command-line tool" data-secondary="ansible-galaxy list command"/> as follows:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-galaxy list</pre>
+
+<p class="pagebreak-before">Output should look like this:</p>
+
+<pre data-type="programlisting"> bennojoy.ntp, master</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Uninstalling a role</h3>
+
+<p>Remove a role<a data-type="indexterm" data-primary="ansible-galaxy command-line tool" data-secondary="ansible-galaxy remove command"/> with the <code>remove</code> command:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-galaxy remove bennojoy.ntp</pre>
+</section>
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Contributing Your Own Role</h2>
+
+<p>See "How To Share Roles You&#8217;ve Written" on the <a href="https://galaxy.ansible.com/intro">Ansible Galaxy website</a> for details on how to contribute a role to the community. Because the roles are hosted on GitHub, you need to have a GitHub account to contribute.<a data-type="indexterm" data-primary="Ansible Galaxy" data-secondary="contributing your own role"/><a data-type="indexterm" data-primary="roles" data-secondary="Ansible Galaxy" data-startref="ix_roleAG"/><a data-type="indexterm" data-primary="Ansible Galaxy" data-startref="ix_AnsGal"/></p>
+
+<p>At this point, you should have an understanding of how to use roles, how to write your own roles, and how to download roles written by others. Roles are a great way to organize your playbooks. I use them all the time, and I highly recommend them.<a data-type="indexterm" data-primary="roles" data-startref="ix_role"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+</section>

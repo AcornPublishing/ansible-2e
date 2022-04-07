@@ -1,0 +1,904 @@
+<section data-type="chapter" id="variables_and_facts">
+<h1>Variables and Facts</h1>
+
+
+<p>Ansible is not a full-fledged programming language, but it does have several
+programming language features, and one of the most important of these is
+variable substitution.<a data-type="indexterm" id="ix_vars" data-primary="variables"/>  This chapter presents Ansible&#8217;s support for variables in
+more detail, including a certain type of variable that Ansible calls a <em>fact</em>.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Defining Variables in Playbooks</h1>
+
+<p>The simplest way to define variables is to put a <code>vars</code> section in your playbook with the names and values of variables.<a data-type="indexterm" data-primary="variables" data-secondary="defining in playbooks"/><a data-type="indexterm" data-primary="playbooks" data-secondary="defining variables in"/> Recall from <a data-type="xref" href="#WEB_TLS_PLAYBOOK"/> that we used this approach to define several configuration-related variables, like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">vars:
+  key_file: /etc/nginx/ssl/nginx.key
+  cert_file: /etc/nginx/ssl/nginx.crt
+  conf_file: /etc/nginx/sites-available/default
+  server_name: localhost</pre>
+
+<p>Ansible also allows you to put variables into one or more files, using a section called <code>vars_files</code>.<a data-type="indexterm" data-primary="vars_files"/> Let&#8217;s say we want to take the preceding example and put the variables in a file named <em>nginx.yml</em> instead of putting them right in the playbook. We would replace the <code>vars</code> section with a <code>vars_files</code> that looks like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">vars_files:
+ - nginx.yml</pre>
+
+<p>The <em>nginx.yml</em> file would look like <a data-type="xref" href="#nginx_vars_example"/>.</p>
+<div id="nginx_vars_example" data-type="example" class="pagebreak-before">
+<h5>nginx.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">key_file: /etc/nginx/ssl/nginx.key
+cert_file: /etc/nginx/ssl/nginx.crt
+conf_file: /etc/nginx/sites-available/default
+server_name: localhost</pre></div>
+
+<p>You&#8217;ll see an example of <code>vars_files</code> in action in <a data-type="xref" href="#deploying_mezzanine"/> when
+we use it to separate out the variables that contain sensitive information.</p>
+
+<p>As we discussed in <a data-type="xref" href="#inventory"/>, Ansible also lets you define variables
+associated with hosts or groups in the inventory file or in separate files
+that live alongside the inventory file.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Viewing the Values of Variables</h1>
+
+<p>For debugging, it&#8217;s often handy to be able to view the output of a variable.<a data-type="indexterm" data-primary="variables" data-secondary="viewing values of"/> You
+saw in <a data-type="xref" href="#playbooks_a_beginning"/> how to use the <code>debug</code> module to print
+out an arbitrary message.<a data-type="indexterm" data-primary="debug module" data-secondary="outputting value of variables"/> We can also use it to output the value of the variable.
+It works like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- debug: var=myvarname</pre>
+
+<p>We&#8217;ll be using this form of the <code>debug</code> module several times in this chapter.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Registering Variables</h1>
+
+<p>Often, you&#8217;ll find that you need to set the value of a variable based on the
+result of a task.<a data-type="indexterm" id="ix_varsreg" data-primary="variables" data-secondary="registering"/> To do so, we create a <em>registered
+variable</em> using the <code>register</code>
+clause when invoking a module.  <a data-type="xref" href="#capture_output"/> shows how to capture
+the output of the <code>whoami</code> command to a variable named <code>login</code>.<a data-type="indexterm" data-primary="whoami command, capturing output to a variable"/><a data-type="indexterm" data-primary="commands" data-secondary="output of, capturing to a variable"/></p>
+<div id="capture_output" data-type="example">
+<h5>Capturing the output of a command to a variable</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: capture output of whoami command
+  command: whoami
+  register: login</pre></div>
+
+<p>In order to use the <code>login</code> variable later, we need to know the type of value to expect.
+The value of a variable set using the <code>register</code> clause is always a dictionary,
+but the specific keys of the dictionary are different, depending on the module
+that was invoked.<a data-type="indexterm" data-primary="register clause"/><a data-type="indexterm" data-primary="dictionaries" data-secondary="value of variables set using register"/></p>
+
+<p>Unfortunately, the official Ansible module documentation doesn&#8217;t contain
+information about what the return values look like for each module. The module docs do often contain
+examples that use the <code>register</code> clause, which can be helpful. I&#8217;ve found the
+simplest way to find out what a module returns is to register a variable and then output
+that variable with the <code>debug</code> module.<a data-type="indexterm" data-primary="modules" data-secondary="registered as variable, outputting returns with debug"/><a data-type="indexterm" data-primary="debug module" data-secondary="module registered as variable, outputting returns"/></p>
+
+<p>Let&#8217;s say we run the playbook shown in <a data-type="xref" href="#whoami_example"/>.</p>
+<div id="whoami_example" data-type="example">
+<h5>whoami.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: show return value of command module
+  hosts: server1
+  tasks:
+    - name: capture output of id command
+      command: id -un
+      register: login
+    - debug: var=login</pre></div>
+
+<p>The output of the <code>debug</code> module looks like this:</p>
+
+<pre data-type="programlisting">TASK: [debug var=login] *******************************************************
+ok: [server1] =&gt; {
+    "login": {
+        "changed": true, <a class="co" id="co_variables_and_facts_CO1-1" href="#callout_variables_and_facts_CO1-1"><img src="callouts/1.png" alt="1"/></a>
+        "cmd": [ <a class="co" id="co_variables_and_facts_CO1-2" href="#callout_variables_and_facts_CO1-2"><img src="callouts/2.png" alt="2"/></a>
+            "id",
+            "-un"
+        ],
+        "delta": "0:00:00.002180",
+        "end": "2015-01-11 15:57:19.193699",
+        "invocation": {
+            "module_args": "id -un",
+            "module_name": "command"
+        },
+        "rc": 0, <a class="co" id="co_variables_and_facts_CO1-3" href="#callout_variables_and_facts_CO1-3"><img src="callouts/3.png" alt="3"/></a>
+        "start": "2015-01-11 15:57:19.191519",
+        "stderr": "", <a class="co" id="co_variables_and_facts_CO1-4" href="#callout_variables_and_facts_CO1-4"><img src="callouts/4.png" alt="4"/></a>
+        "stdout": "vagrant", <a class="co" id="co_variables_and_facts_CO1-5" href="#callout_variables_and_facts_CO1-5"><img src="callouts/5.png" alt="5"/></a>
+        "stdout_lines": [ <a class="co" id="co_variables_and_facts_CO1-6" href="#callout_variables_and_facts_CO1-6"><img src="callouts/6.png" alt="6"/></a>
+            "vagrant"
+        ],
+        "warnings": []
+    }
+}</pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_variables_and_facts_CO1-1" href="#co_variables_and_facts_CO1-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>The <code>changed</code> key is present in the return value of all Ansible modules, and Ansible uses it to determine whether a state change has occurred.<a data-type="indexterm" data-primary="shell module" data-secondary="changed key"/><a data-type="indexterm" data-primary="command module" data-secondary="changed key"/> For the <code>command</code> and <code>shell</code> module, this will always be set to <code>true</code> unless overridden with the <code>changed_when</code> clause, which we cover in <a data-type="xref" href="#more_on_playbooks_a"/>.</p></dd>
+<dt><a class="co" id="callout_variables_and_facts_CO1-2" href="#co_variables_and_facts_CO1-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>The <code>cmd</code> key contains the invoked command as a list of strings.</p></dd>
+<dt><a class="co" id="callout_variables_and_facts_CO1-3" href="#co_variables_and_facts_CO1-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>The <code>rc</code> key contains the return code. If it is nonzero, Ansible will assume the task failed to execute.</p></dd>
+<dt><a class="co" id="callout_variables_and_facts_CO1-4" href="#co_variables_and_facts_CO1-4"><img src="callouts/4.png" alt="4"/></a></dt>
+<dd><p>The <code>stderr</code> key contains any text written to standard error, as a single string.</p></dd>
+<dt><a class="co" id="callout_variables_and_facts_CO1-5" href="#co_variables_and_facts_CO1-5"><img src="callouts/5.png" alt="5"/></a></dt>
+<dd><p>The <code>stdout</code> key contains any text written to standard out, as a single string.</p></dd>
+<dt><a class="co" id="callout_variables_and_facts_CO1-6" href="#co_variables_and_facts_CO1-6"><img src="callouts/6.png" alt="6"/></a></dt>
+<dd><p>The <code>stdout_lines</code> key contains any text written to split by newline. It is a list, and each element of the list is a line of output.</p></dd>
+</dl>
+
+<p>If you&#8217;re using the <code>register</code> clause with the <code>command</code> module,<a data-type="indexterm" data-primary="command module" data-secondary="using output in a task"/><a data-type="indexterm" data-primary="tasks" data-secondary="using command module output in"/><a data-type="indexterm" data-primary="stdout key" data-secondary="using register clause with command module"/> you&#8217;ll likely want access to the <code>stdout</code> key, as shown in <a data-type="xref" href="#using_output_command_task"/>.</p>
+<div id="using_output_command_task" data-type="example">
+<h5>Using the output of a command in a task</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: capture output of id command
+  command: id -un
+  register: login
+- debug: msg="Logged in as user {{ login.stdout }}"</pre></div>
+
+<p>Sometimes it&#8217;s useful to do something with the output of a failed task.<a data-type="indexterm" data-primary="tasks" data-secondary="failed"/> However,
+if <span class="keep-together">the task fails</span>, Ansible will stop executing tasks for the failed host.
+We can use the <code>ignore_errors</code> clause, as shown in <a data-type="xref" href="#example4-5"/>, so Ansible does not stop on the error.<a data-type="indexterm" data-primary="errors" data-secondary="ignoring for failed tasks"/><a data-type="indexterm" data-primary="ignore_errors clause"/></p>
+<div id="example4-5" data-type="example">
+<h5>Ignoring when a module returns an error</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: Run myprog
+  command: /opt/myprog
+  register: result
+  ignore_errors: True
+- debug: var=result</pre></div>
+
+<p>The <code>shell</code> module <a data-type="indexterm" data-primary="shell module" data-secondary="output structure"/>has the same output structure as the <code>command</code> module, but other modules contain different keys. <a data-type="xref" href="#apt_package_not_present"/> shows the output of the <code>apt</code> module when installing a package that wasn&#8217;t present before.<a data-type="indexterm" data-primary="apt module" data-secondary="output when installing a new package"/></p>
+<div id="apt_package_not_present" data-type="example">
+<h5>Output of apt module when installing a new package</h5>
+
+<pre data-type="programlisting">ok: [server1] =&gt; {
+    "result": {
+        "changed": true,
+        "invocation": {
+            "module_args": "name=nginx",
+            "module_name": "apt"
+        },
+        "stderr": "",
+        "stdout": "Reading package lists...\nBuilding dependency tree...",
+        "stdout_lines": [
+            "Reading package lists...",
+            "Building dependency tree...",
+            "Reading state information...",
+            "Preparing to unpack .../nginx-common_1.4.6-1ubuntu3.1_all.deb ...",
+            ...
+            "Setting up nginx-core (1.4.6-1ubuntu3.1) ...",
+            "Setting up nginx (1.4.6-1ubuntu3.1) ...",
+            "Processing triggers for libc-bin (2.19-0ubuntu6.3) ..."
+        ]
+    }
+}</pre></div>
+<aside data-type="sidebar">
+<h5>Accessing Dictionary Keys in a Variable</h5>
+<p>If a variable contains a dictionary, you can access the keys
+of the dictionary by using either a dot (.) or a subscript ([]).<a data-type="indexterm" data-primary="[] (subscript) notation"/><a data-type="indexterm" data-primary=". (dot) notation, accessing dictionary keys in a variable"/><a data-type="indexterm" data-primary="dictionaries" data-secondary="in variables, accessing dictionary keys"/> <a data-type="xref" href="#using_output_command_task"/> has a variable reference that uses dot
+notation:</p>
+
+<pre data-type="programlisting">{{ login.stdout }}</pre>
+
+<p>We could have used subscript notation instead:</p>
+
+<pre data-type="programlisting">{{ login['stdout'] }}</pre>
+
+<p>This rule applies to multiple <a data-type="indexterm" data-primary="variables" data-secondary="dereferencing"/>dereferences, so all of the following are equivalent:</p>
+
+<pre data-type="programlisting">ansible_eth1['ipv4']['address']
+ansible_eth1['ipv4'].address
+ansible_eth1.ipv4['address']
+ansible_eth1.ipv4.address</pre>
+
+<p>I generally prefer dot notation, unless the key is a string that
+contains a character that&#8217;s not allowed as a variable name, such as a dot, space, or hyphen.</p>
+
+<p>Ansible uses<a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="variable dereferencing with"/> Jinja2 to implement variable dereferencing, so for more details on this topic, see the <a href="http://jinja.pocoo.org/docs/dev/templates/#variables">Jinja2 documentation on variables</a>.</p>
+</aside>
+
+<p><a data-type="xref" href="#apt_already_present"/> shows the output of the <code>apt</code> module when<a data-type="indexterm" data-primary="apt module" data-secondary="output when a package is already present on a host"/> the package is already present on the host.</p>
+<div id="apt_already_present" data-type="example">
+<h5>Output of apt module when package already present</h5>
+
+<pre data-type="programlisting">ok: [server1] =&gt; {
+    "result": {
+        "changed": false,
+        "invocation": {
+            "module_args": "name=nginx",
+            "module_name": "apt"
+        }
+    }
+}</pre></div>
+
+<p>Note that the <code>stdout</code>, <code>stderr</code>, and <code>stdout_lines</code> keys are present in the output only when the package was not previously installed.<a data-type="indexterm" data-primary="stdout key" data-secondary="in apt module output"/><a data-type="indexterm" data-primary="stderr key, in apt module output"/><a data-type="indexterm" data-primary="stdout_lines key in apt module output"/></p>
+<div data-type="caution">
+<p>If your playbooks use registered variables, make sure you know the content of
+those variables, both for cases where the module changes the host&#8217;s state and for
+when the module doesn&#8217;t change the host&#8217;s state.<a data-type="indexterm" data-primary="playbooks" data-secondary="registered variables in"/> Otherwise, your playbook might
+fail when it tries to access a key in a registered variable that doesn&#8217;t
+exist.<a data-type="indexterm" data-primary="variables" data-secondary="registering" data-startref="ix_varsreg"/></p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Facts</h1>
+
+<p>As you&#8217;ve already seen, when Ansible runs a playbook, before the first task runs,
+this<a data-type="indexterm" id="ix_varsfact" data-primary="variables" data-secondary="facts"/><a data-type="indexterm" id="ix_fact" data-primary="facts"/> happens:</p>
+
+<pre data-type="programlisting">GATHERING FACTS **************************************************
+ok: [servername]</pre>
+
+<p>When Ansible gathers facts, it connects to the host and queries it for all
+kinds of details about the host: CPU architecture, operating system, IP
+addresses, memory info, disk info, and more. This information is stored in
+variables that are called <em>facts</em>, and they behave just like any other variable.</p>
+
+<p>Here&#8217;s a simple playbook that prints out<a data-type="indexterm" data-primary="facts" data-secondary="playbook printing out operating system of each server"/> the operating system of each server:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: print out operating system
+  hosts: all
+  gather_facts: True
+  tasks:
+  - debug: var=ansible_distribution</pre>
+
+<p>Here&#8217;s what the output looks like for servers running Ubuntu and CentOS:</p>
+
+<pre data-type="programlisting">PLAY [print out operating system] *********************************************
+
+GATHERING FACTS ***************************************************************
+ok: [server1]
+ok: [server2]
+
+TASK: [debug var=ansible_distribution] ****************************************
+ok: [server1] =&gt; {
+    "ansible_distribution": "Ubuntu"
+}
+ok: [server2] =&gt; {
+    "ansible_distribution": "CentOS"
+}
+
+PLAY RECAP ********************************************************************
+server1                    : ok=2    changed=0    unreachable=0    failed=0
+server2                    : ok=2    changed=0    unreachable=0    failed=0</pre>
+
+<p>You can consult the <a href="http://bit.ly/1G9pVfx">official Ansible documentation</a>
+for a list of some of the available facts.<a data-type="indexterm" data-primary="facts" data-secondary="Ansible documentation for"/> I maintain a more comprehensive list of facts on <a href="http://bit.ly/1G9pX7a">GitHub</a>.<a data-type="indexterm" data-primary="GitHub repositories" data-secondary="list of facts"/></p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Viewing All Facts Associated with a Server</h2>
+
+<p>Ansible implements fact collecting through the use of a special module called
+the <code>setup</code> module.<a data-type="indexterm" data-primary="setup module"/><a data-type="indexterm" data-primary="facts" data-secondary="viewing all facts associated with a server"/> You don&#8217;t need to call this module in your playbooks because
+Ansible does that automatically when it gathers facts. However, if you invoke it
+manually with the <code>ansible</code> command-line tool, like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible server1 -m setup</pre>
+
+<p>then Ansible will output all of the facts,<a data-type="indexterm" data-primary="setup module" data-secondary="facts output by"/> as shown in <a data-type="xref" href="#setup_module_output"/>.</p>
+<div id="setup_module_output" data-type="example">
+<h5>Output of setup module</h5>
+
+<pre data-type="programlisting">server1 | success &gt;&gt; {
+    "ansible_facts": {
+        "ansible_all_ipv4_addresses": [
+            "10.0.2.15",
+            "192.168.4.10"
+        ],
+        "ansible_all_ipv6_addresses": [
+            "fe80::a00:27ff:fefe:1e4d",
+            "fe80::a00:27ff:fe67:bbf3"
+        ],
+(many more facts)</pre></div>
+
+<p>Note that the returned value is a dictionary whose key is <code>ansible_facts</code> and
+whose value is a dictionary that contains the name and value of the actual
+facts.<a data-type="indexterm" data-primary="ansible_facts key"/><a data-type="indexterm" data-primary="dictionaries" data-secondary="facts returned by setup module"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Viewing a Subset of Facts</h2>
+
+<p>Because Ansible collects many facts, the <code>setup</code> module supports a <code>filter</code> parameter that <a data-type="indexterm" data-primary="filter parameter, setup module"/><a data-type="indexterm" data-primary="facts" data-secondary="viewing a subset of"/>lets you filter by fact name by specifying a
+glob.<span data-type="footnote">A <em>glob</em> is what shells use to match file patterns (e.g., <code>*.txt</code>).</span> For example:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible web -m setup -a 'filter=ansible_eth*'</pre>
+
+<p>The output looks like this:</p>
+
+<pre data-type="programlisting">web | success &gt;&gt; {
+    "ansible_facts": {
+        "ansible_eth0": {
+            "active": true,
+            "device": "eth0",
+            "ipv4": {
+                "address": "10.0.2.15",
+                "netmask": "255.255.255.0",
+                "network": "10.0.2.0"
+            },
+            "ipv6": [
+                {
+                    "address": "fe80::a00:27ff:fefe:1e4d",
+                    "prefix": "64",
+                    "scope": "link"
+                }
+            ],
+            "macaddress": "08:00:27:fe:1e:4d",
+            "module": "e1000",
+            "mtu": 1500,
+            "promisc": false,
+            "type": "ether"
+        },
+        "ansible_eth1": {
+            "active": true,
+            "device": "eth1",
+            "ipv4": {
+                "address": "192.168.33.10",
+                "netmask": "255.255.255.0",
+                "network": "192.168.33.0"
+            },
+            "ipv6": [
+                {
+                    "address": "fe80::a00:27ff:fe23:ae8e",
+                    "prefix": "64",
+                    "scope": "link"
+                }
+            ],
+            "macaddress": "08:00:27:23:ae:8e",
+            "module": "e1000",
+            "mtu": 1500,
+            "promisc": false,
+            "type": "ether"
+        }
+    },
+    "changed": false
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Any Module Can Return Facts</h2>
+
+<p>If you look closely at <a data-type="xref" href="#setup_module_output"/>, you&#8217;ll see that the output is a dictionary whose key is <code>ansible_facts</code>.  <a data-type="indexterm" data-primary="modules" data-secondary="returning facts"/><a data-type="indexterm" data-primary="facts" data-secondary="return by any module"/><a data-type="indexterm" data-primary="ansible_facts key"/>The use of <code>ansible_facts</code> in the return value is an Ansible idiom. If a module returns a dictionary that contains <code>ansible_facts</code> as a key, Ansible will create variable names in the environment with those values and associate them with the active host.</p>
+
+<p>For modules that return facts, there&#8217;s no need to register variables, since Ansible creates these variables for you automatically.<a data-type="indexterm" data-primary="Amazon EC2" data-secondary="ec2_facts module"/><a data-type="indexterm" data-primary="ec2_facts module"/> For example, the following tasks use the <code>ec2_facts</code> module to retrieve Amazon EC2<span data-type="footnote">We&#8217;ll cover Amazon EC2 in more detail in <a data-type="xref" href="#cloud"/>.</span> facts about a server and then print out the instance ID:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: get ec2 facts
+  ec2_facts:
+
+- debug: var=ansible_ec2_instance_id</pre>
+
+<p>The output looks like this.</p>
+
+<pre data-type="programlisting">TASK: [debug var=ansible_ec2_instance_id] *************************************
+ok: [myserver] =&gt; {
+    "ansible_ec2_instance_id": "i-a3a2f866"
+}</pre>
+
+<p>Note that we do not need to use the <code>register</code> keyword when invoking
+<code>ec2_facts</code>, since the returned values are facts. <a data-type="indexterm" data-primary="register clause" data-secondary="and modules with facts for returned values"/> Several modules ship with Ansible that return facts. You&#8217;ll see another one of them, the <code>docker</code>
+module, in <a data-type="xref" href="#ch_docker"/>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Local Facts</h2>
+
+<p>Ansible provides an additional mechanism for associating facts with a host.
+You can place one or more files on the remote host machine in the
+<em>/etc/ansible/facts.d</em> directory.<a data-type="indexterm" data-primary="local facts"/><a data-type="indexterm" data-primary="facts" data-secondary="local"/> Ansible will recognize the file if it&#8217;s any of
+the following:</p>
+
+<ul>
+<li>
+<p>In <em>.ini</em> format</p>
+</li>
+<li>
+<p>In JSON format</p>
+</li>
+<li>
+<p>An executable that takes no arguments and outputs JSON on standard out</p>
+</li>
+</ul>
+
+<p>These facts are available as keys of a special variable named <code>ansible_local</code>.<a data-type="indexterm" data-primary="ansible_local variable"/></p>
+
+<p>For instance, <a data-type="xref" href="#local_fact"/> shows a fact file in <em>.ini</em> format.<a data-type="indexterm" data-primary=".ini file format" data-secondary="facts file in" data-primary-sortas="ini file format"/></p>
+<div id="local_fact" data-type="example">
+<h5>/etc/ansible/facts.d/example.fact</h5>
+
+<pre data-type="programlisting">[book]
+title=Ansible: Up and Running
+author=Lorin Hochstein
+publisher=O'Reilly Media</pre></div>
+
+<p>If we copy this file to <em>/etc/ansible/facts.d/example.fact</em> on the remote host, we can access the contents of the <code>ansible_local</code> variable<a data-type="indexterm" data-primary="playbooks" data-secondary="accessing contents of ansible_local variable"/> in a playbook:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: print ansible_local
+  debug: var=ansible_local
+- name: print book title
+  debug: msg="The title of the book is {{ ansible_local.example.book.title }}"</pre>
+
+<p>The output of these tasks looks like this:</p>
+
+<pre data-type="programlisting">TASK: [print ansible_local] ***************************************************
+ok: [server1] =&gt; {
+    "ansible_local": {
+        "example": {
+            "book": {
+                "author": "Lorin Hochstein",
+                "publisher": "O'Reilly Media",
+                "title": "Ansible: Up and Running"
+            }
+        }
+    }
+}
+
+TASK: [print book title] ******************************************************
+ok: [server1] =&gt; {
+    "msg": "The title of the book is Ansible: Up and Running"
+}</pre>
+
+<p>Note the structure of value in the <code>ansible_local</code> variable. Because the fact file is named <em>example.fact</em>, the <code>ansible_local</code> variable is a dictionary that contains a key named <code>example</code>.<a data-type="indexterm" data-primary="variables" data-secondary="facts" data-startref="ix_varsfact"/><a data-type="indexterm" data-primary="facts" data-startref="ix_fact"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Using set_fact to Define a New Variable</h1>
+
+<p>Ansible also allows you to set a fact (effectively the same as defining a new variable) in a task by using the <code>set_fact</code> module.<a data-type="indexterm" data-primary="set_fact module"/><a data-type="indexterm" data-primary="facts" data-secondary="using set_fact to define a new variable"/><a data-type="indexterm" data-primary="variables" data-secondary="defining using set_fact module"/> I often like to use <code>set_fact</code> immediately after <code>register</code> to make it simpler to refer to a variable. <a data-type="xref" href="#SET_FACT_SIMPLIFY"/> demonstrates how to use <code>set_fact</code> so that a variable can be referred to as <code>snap</code> instead of <code>snap_result.stdout</code>.</p>
+<div id="SET_FACT_SIMPLIFY" data-type="example">
+<h5>Using set_fact to simplify variable reference</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: get snapshot id
+  shell: &gt;
+    aws ec2 describe-snapshots --filters
+    Name=tag:Name,Values=my-snapshot
+    | jq --raw-output ".Snapshots[].SnapshotId"
+  register: snap_result
+
+- set_fact: snap={{ snap_result.stdout }}
+
+- name: delete old snapshot
+  command: aws ec2 delete-snapshot --snapshot-id "{{ snap }}"</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Built-in Variables</h1>
+
+<p>Ansible defines several variables that are always available in a playbook; some
+of these variables are shown in <a data-type="xref" href="#built_in_variables"/>.<a data-type="indexterm" id="ix_varsbi" data-primary="variables" data-secondary="built-in"/></p>
+<table id="built_in_variables">
+<caption>Built-in variables</caption>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>hostvars</p></td>
+<td><p>A dict whose keys are Ansible hostnames and values are dicts that map variable names to values</p></td>
+</tr>
+<tr>
+<td><p>inventory_hostname</p></td>
+<td><p>Fully qualified domain name of the current host as known by Ansible (e.g., <code>myhost.example.com</code>)</p></td>
+</tr>
+<tr>
+<td><p>inventory_hostname_short</p></td>
+<td><p>Name of the current host as known by Ansible, without the domain name (e.g., <code>myhost</code>)</p></td>
+</tr>
+<tr>
+<td><p>group_names</p></td>
+<td><p>A list of all groups that the current host is a member of</p></td>
+</tr>
+<tr>
+<td><p>groups</p></td>
+<td><p>A dict whose keys are Ansible group names and values are a list of hostnames that are members of the group. Includes <code>all</code> and ungrouped groups: <code>{"all": [&#8230;], "web": [&#8230;], "ungrouped": [&#8230;]}</code></p></td>
+</tr>
+<tr>
+<td><p>ansible_check_mode</p></td>
+<td><p>A boolean that is true when running in check mode (see <a data-type="xref" href="#check_mode"/>)</p></td>
+</tr>
+<tr>
+<td><p>ansible_play_batch</p></td>
+<td><p>A list of the inventory hostnames that are active in the current batch (see <a data-type="xref" href="#batch_of_hosts"/>)</p></td>
+</tr>
+<tr>
+<td><p>ansible_play_hosts</p></td>
+<td><p>A list of all of the inventory hostnames that are active in the current play</p></td>
+</tr>
+<tr>
+<td><p>ansible_version</p></td>
+<td><p>A dict with Ansible version info: <code>{"full": 2.3.1.0", "major": 2, "minor": 3, "revision": 1, "string": "2.3.1.0"}</code></p></td>
+</tr>
+</tbody>
+</table>
+
+<p>The <code>hostvars</code>, <code>inventory_hostname</code>, and <code>groups</code> variables merit some additional discussion.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>hostvars</h2>
+
+<p>In Ansible, variables are scoped by host. It only makes sense to talk about the
+value of a variable relative to a given host.<a data-type="indexterm" data-primary="variables" data-secondary="built-in" data-tertiary="hostvars"/></p>
+
+<p>The idea that variables are relative to a given host might sound confusing, since
+Ansible allows you to define variables on a group of hosts. For example, if you define a
+variable in the <code>vars</code> section of a play, you are defining the variable for the
+set of hosts in the play. But what Ansible is really doing is creating a copy of
+that variable for each host in the group.</p>
+
+<p>Sometimes, a task that&#8217;s running on one host needs the value of a variable
+defined on another host. Say you need to create a
+configuration file on web servers that contains the IP address of the <em>eth1</em>
+interface of the database server, and you don&#8217;t know in advance what this IP
+address is. This IP address is available as the <em>ansible_eth1.ipv4.address</em> fact for the
+database server.</p>
+
+<p>The solution is to use the <code>hostvars</code> variable.<a data-type="indexterm" data-primary="hostvars variable"/> This is a dictionary that
+contains all of the variables defined on all of the hosts, keyed by the
+hostname as known to Ansible. If Ansible has not yet gathered facts on a host, you will not be able to access its facts by using the <code>hostvars</code>
+variable, unless fact caching is enabled.<span data-type="footnote">See <a data-type="xref" href="#connections-ssh"/> for information about fact caching.</span></p>
+
+<p>Continuing our example, if our database server is <em>db.example.com</em>, then we could
+put the following in a configuration template:</p>
+
+<pre data-type="programlisting">{{ hostvars['db.example.com'].ansible_eth1.ipv4.address }}</pre>
+
+<p>This evaluates to the <em>ansible_eth1.ipv4.address</em> fact associated with the
+host named <em>db.example.com</em>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>inventory_hostname</h2>
+
+<p>The <code>inventory_hostname</code> is the hostname of the current host, as known by
+Ansible.<a data-type="indexterm" data-primary="inventory_hostname variable"/><a data-type="indexterm" data-primary="variables" data-secondary="built-in" data-tertiary="inventory_hostname"/><a data-type="indexterm" data-primary="hostnames" data-secondary="inventory_hostname variable"/> If you have defined an alias for a host, this is the alias name.
+For example, if your inventory contains a line like this:</p>
+
+<pre data-type="programlisting">server1 ansible_host=192.168.4.10</pre>
+
+<p>then <code>inventory_hostname</code> would be <code>server1</code>.</p>
+
+<p>You can output all of the variables associated with the current host with the help of the <code>hostvars</code> and <code>inventory_hostname</code> variables:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- debug: var=hostvars[inventory_hostname]</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Groups</h2>
+
+<p>The <code>groups</code> variable can be useful when you need to access variables for a
+group of hosts.<a data-type="indexterm" data-primary="groups" data-secondary="groups variable"/><a data-type="indexterm" data-primary="variables" data-secondary="built-in" data-tertiary="groups"/> Let&#8217;s say we are configuring a load-balancing host, and our configuration file needs the IP addresses of all of the servers in our web group. Our configuration file contains a fragment that looks like this:</p>
+
+<pre data-type="programlisting">backend web-backend
+{% for host in groups.web %}
+  server {{ hostvars[host].inventory_hostname }} \
+  {{ hostvars[host].ansible_default_ipv4.address }}:80
+{% endfor %}</pre>
+
+<p class="pagebreak-before">The generated file looks like this:</p>
+
+<pre data-type="programlisting">backend web-backend
+  server georgia.example.com 203.0.113.15:80
+  server newhampshire.example.com 203.0.113.25:80
+  server newjersey.example.com 203.0.113.38:80</pre>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Setting Variables on the Command Line</h1>
+
+<p>Variables set by passing <code>-e var=value</code> to <code>ansible-playbook</code> have the <a data-type="indexterm" data-primary="variables" data-secondary="built-in" data-startref="ix_varsbi"/><a data-type="indexterm" data-primary="variables" data-secondary="setting on the command line"/><a data-type="indexterm" data-primary="command-line interface (CLI)" data-secondary="setting variables on"/>highest precedence, which means you can use this to override variables that are already defined. <a data-type="xref" href="#SETTING_VAR_COMMAND_LINE"/> shows how to set the variable named <code>token</code> to the value <code>12345</code>.</p>
+<div id="SETTING_VAR_COMMAND_LINE" data-type="example">
+<h5>Setting a variable from the command line</h5>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook example.yml -e token=12345</pre></div>
+
+<p>Use the <code>ansible-playbook -e var=value</code> method when you want to use a
+playbook as you would a shell script that takes a command-line argument.<a data-type="indexterm" data-primary="ansible-playbook -e var=value command"/> The
+<code>-e</code> flag effectively allows you to pass variables as arguments.</p>
+
+<p><a data-type="xref" href="#greet-yml"/> shows a very simple playbook that outputs a message specified by a variable.</p>
+<div id="greet-yml" data-type="example">
+<h5>greet.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: pass a message on the command line
+  hosts: localhost
+  vars:
+    greeting: "you didn't specify a message"
+  tasks:
+    - name: output a message
+      debug: msg="{{ greeting }}"</pre></div>
+
+<p>If we invoke it like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook greet.yml -e greeting=hiya</pre>
+
+<p>then the output looks like this:</p>
+
+<pre data-type="programlisting">PLAY [pass a message on the command line] *************************************
+
+TASK: [output a message] ******************************************************
+ok: [localhost] =&gt; {
+    "msg": "hiya"
+}
+
+PLAY RECAP ********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0</pre>
+
+<p>If you want to put a space in the variable, you need<a data-type="indexterm" data-primary="quotation marks" data-secondary="in message output passed in a variable"/> to use quotes like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook greet.yml -e 'greeting="hi there"'</pre>
+
+<p>You have to put single quotes around the entire <code>'greeting="hi there"'</code> so that the
+shell interprets that as a single argument to pass to Ansible, and you have to put double quotes
+around <code>"hi there"</code> so that Ansible treats that message as a single string.</p>
+
+<p>Ansible also allows you to pass a file containing the variables instead of
+passing them directly on the command line by passing <code>@filename.yml</code> as the
+argument to <code>-e</code>; for example, say<a data-type="indexterm" data-primary="ansible-playbook -e @filename.yml"/> we have a file that looks like <a data-type="xref" href="#greetvars"/>.</p>
+<div id="greetvars" data-type="example">
+<h5>greetvars.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">greeting: hiya</pre></div>
+
+<p>Then we can pass this file to the command line like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook greet.yml -e @greetvars.yml</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" id="precedence">
+<h1>Precedence</h1>
+
+<p>We&#8217;ve covered several ways of defining variables, and it can happen
+that you define the same variable multiple times for a host, using different
+values.<a data-type="indexterm" data-primary="variables" data-secondary="precedence rules for same variable defined in multiple ways"/><a data-type="indexterm" data-primary="precedence rules for variable values"/> Avoid this when you can, but if you can&#8217;t, then keep in mind Ansible&#8217;s
+precedence rules. When the same variable is defined in multiple ways, the
+precedence rules determine which value wins.</p>
+
+<p>The basic rules of precedence are as follows:</p>
+<ol>
+<li>
+<p>(Highest) <code>ansible-playbook -e var=value</code></p>
+</li>
+<li>
+<p>Task variables</p>
+</li>
+<li>
+<p>Block variables</p>
+</li>
+<li>
+<p>Role and include variables</p>
+</li>
+<li>
+<p><code>set_fact</code></p>
+</li>
+<li>
+<p>Registered variables</p>
+</li>
+<li>
+<p><code>vars_files</code></p>
+</li>
+<li>
+<p><code>vars_prompt</code></p>
+</li>
+<li>
+<p>Play variables</p>
+</li>
+<li>
+<p>Host facts</p>
+</li>
+<li>
+<p><code>host_vars</code> set on a playbook</p>
+</li>
+<li>
+<p><code>group_vars</code> set on a playbook</p>
+</li>
+<li>
+<p><code>host_vars</code> set in the inventory</p>
+</li>
+<li>
+<p><code>group_vars</code> set in the inventory</p>
+</li>
+<li>
+<p>Inventory variables</p>
+</li>
+<li>
+<p>In <em>defaults/main.yml</em> of a role<span data-type="footnote">We&#8217;ll discuss roles in <a data-type="xref" href="#roles"/>.</span></p>
+</li>
+
+</ol>
+
+<p>In this chapter, we covered various ways to define and access
+variables and facts. The next chapter focuses on a realistic example of
+deploying an application.<a data-type="indexterm" data-primary="variables" data-startref="ix_vars"/></p>
+</section>
+
+
+
+
+
+
+
+</section>

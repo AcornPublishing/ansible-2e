@@ -1,0 +1,1441 @@
+<section data-type="chapter" id="inventory">
+<h1>Inventory: Describing Your Servers</h1>
+
+
+<p>So far, we&#8217;ve been working with only one server (or <em>host</em>, as Ansible calls
+it). In reality, you&#8217;re going to be managing multiple hosts.<a data-type="indexterm" data-primary="hosts" data-secondary="inventory" data-seealso="inventory"/><a data-type="indexterm" id="ix_inven" data-primary="inventory"/> The collection of
+hosts that Ansible knows about is called the <em>inventory</em>. In this chapter, you will learn how to describe a set of hosts as an Ansible inventory.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>The Inventory File</h1>
+
+<p>The default way to describe your hosts in Ansible is to list them in text files, called <em>inventory files</em>.<a data-type="indexterm" data-primary="inventory" data-secondary="inventory files"/><a data-type="indexterm" data-primary="inventory files"/> A very simple inventory file might contain only a list of hostnames, as shown in <a data-type="xref" href="#example3-1"/>.</p>
+<div id="example3-1" data-type="example">
+<h5>A very simple inventory file</h5>
+
+<pre data-type="programlisting">ontario.example.com
+newhampshire.example.com
+maryland.example.com
+virginia.example.com
+newyork.example.com
+quebec.example.com
+rhodeisland.example.com</pre></div>
+<div data-type="note">
+<p>Ansible uses your local SSH client by default, which means that it will
+understand any aliases that you set up in your SSH config file.<a data-type="indexterm" data-primary="SSH" data-secondary="default local client, use by Ansible"/> This does not
+hold true if you configure Ansible to use the Paramiko connection plugin instead
+of the default SSH plugin.</p>
+</div>
+
+<p>Ansible automatically adds one host to the inventory by default: <em>localhost</em>. Ansible understands that <code>localhost</code> refers to your local machine, so it will interact with it directly rather than connecting by SSH.<a data-type="indexterm" data-primary="localhost"/></p>
+<div data-type="warning">
+<p>Although Ansible adds <code>localhost</code> to your inventory automatically, you have to have at least one other host in your inventory file; otherwise, <code>ansible-playbook</code> will terminate with an error:</p>
+
+<pre data-type="programlisting">ERROR: provided hosts list is empty</pre>
+
+<p>If you have no other hosts in your inventory file, you can
+explicitly add an entry for <code>localhost</code> like this:</p>
+
+<pre data-type="programlisting">localhost ansible_connection=local</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" id="preliminaries_multiple_vagrant">
+<h1>Preliminaries: Multiple Vagrant Machines</h1>
+
+<p>To talk about inventory, we need to interact with multiple hosts. Let&#8217;s
+configure Vagrant to bring up three hosts.<a data-type="indexterm" id="ix_invenVag" data-primary="inventory" data-secondary="multiple Vagrant machines"/><a data-type="indexterm" id="ix_Vagmulti" data-primary="Vagrant" data-secondary="configuring to bring up three hosts"/> We&#8217;ll unimaginatively call them <code>vagrant1</code>, <code>vagrant2</code>, and <code>vagrant3</code>.</p>
+
+<p>Before you modify your existing Vagrantfile, make sure you destroy your
+existing virtual machine by running the following:</p>
+
+<pre data-type="programlisting">$ vagrant destroy --force</pre>
+
+<p>If you don&#8217;t include the <code>--force</code> option, Vagrant will prompt you to confirm that
+you want to destroy the virtual machine.<a data-type="indexterm" data-primary="vagrant destroy --force command"/></p>
+
+<p>Next, edit your Vagrantfile so it looks like <a data-type="xref" href="#VAGRANTFILE_WITH_THREE_SERVERS"/>.</p>
+<div id="VAGRANTFILE_WITH_THREE_SERVERS" data-type="example">
+<h5>Vagrantfile with three servers</h5>
+
+<pre data-type="programlisting" data-code-language="ruby">VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  # Use the same key for each machine
+  config.ssh.insert_key = false
+
+  config.vm.define "vagrant1" do |vagrant1|
+    vagrant1.vm.box = "ubuntu/trusty64"
+    vagrant1.vm.network "forwarded_port", guest: 80, host: 8080
+    vagrant1.vm.network "forwarded_port", guest: 443, host: 8443
+  end
+  config.vm.define "vagrant2" do |vagrant2|
+    vagrant2.vm.box = "ubuntu/trusty64"
+    vagrant2.vm.network "forwarded_port", guest: 80, host: 8081
+    vagrant2.vm.network "forwarded_port", guest: 443, host: 8444
+  end
+  config.vm.define "vagrant3" do |vagrant3|
+    vagrant3.vm.box = "ubuntu/trusty64"
+    vagrant3.vm.network "forwarded_port", guest: 80, host: 8082
+    vagrant3.vm.network "forwarded_port", guest: 443, host: 8445
+  end
+end</pre></div>
+
+<p>Vagrant 1.7+ defaults to using a different SSH key for each host.<a data-type="indexterm" data-primary="SSH" data-secondary="using same key for each host"/>
+<a data-type="xref" href="#VAGRANTFILE_WITH_THREE_SERVERS"/> contains the line to revert to the earlier behavior of using the same SSH key for each host:</p>
+
+<pre data-type="programlisting">config.ssh.insert_key = false</pre>
+
+<p>Using the same key on each host simplifies our Ansible setup because we can specify a single SSH key in the <em>ansible.cfg</em> file. <a data-type="indexterm" data-primary="ansible.cfg file" data-secondary="host_key_checking value"/><a data-type="indexterm" data-primary="host_key_checking"/> You&#8217;ll need to edit the <code>host_key_checking</code> value in your <em>ansible.cfg</em>. Your file should look like <a data-type="xref" href="#ANSIBLE_CFG_WITH_VAGRANT_KEY"/>.</p>
+<div id="ANSIBLE_CFG_WITH_VAGRANT_KEY" data-type="example">
+<h5>ansible.cfg</h5>
+
+<pre data-type="programlisting" data-code-language="ini">[defaults]
+inventory = inventory
+remote_user = vagrant
+private_key_file = ~/.vagrant.d/insecure_private_key
+host_key_checking = False</pre></div>
+
+<p>For now, we&#8217;ll assume that each of these servers can potentially be a web server, so
+<a data-type="xref" href="#VAGRANTFILE_WITH_THREE_SERVERS"/> maps ports 80 and 443 inside each Vagrant
+machine to a port on the local machine.</p>
+
+<p>You should be able to bring up the virtual machines by running the following:</p>
+
+<pre data-type="programlisting">$ vagrant up</pre>
+
+<p>If all went well, the output should look something like this:</p>
+
+<pre data-type="programlisting">Bringing machine 'vagrant1' up with 'virtualbox' provider...
+Bringing machine 'vagrant2' up with 'virtualbox' provider...
+Bringing machine 'vagrant3' up with 'virtualbox' provider...
+...
+    vagrant3: 80 =&gt; 8082 (adapter 1)
+    vagrant3: 443 =&gt; 8445 (adapter 1)
+    vagrant3: 22 =&gt; 2201 (adapter 1)
+==&gt; vagrant3: Booting VM...
+==&gt; vagrant3: Waiting for machine to boot. This may take a few minutes...
+    vagrant3: SSH address: 127.0.0.1:2201
+    vagrant3: SSH username: vagrant
+    vagrant3: SSH auth method: private key
+    vagrant3: Warning: Connection timeout. Retrying...
+==&gt; vagrant3: Machine booted and ready!
+==&gt; vagrant3: Checking for guest additions in VM...
+==&gt; vagrant3: Mounting shared folders...
+    vagrant3: /vagrant =&gt; /Users/lorin/dev/oreilly-ansible/playbooks</pre>
+
+<p>Let&#8217;s create an inventory file that contains these three machines.</p>
+
+<p>First, we need to know what ports on the local machine map to the SSH port (22) inside each VM.<a data-type="indexterm" data-primary="SSH" data-secondary="mapping SSH port in Vagrant machines to local machine"/><a data-type="indexterm" data-primary="vagrant ssh-config command"/> Recall that we can get that information by running the following:</p>
+
+<pre data-type="programlisting">$ vagrant ssh-config</pre>
+
+<p>The output should look something like this:</p>
+
+<pre data-type="programlisting">Host vagrant1
+  HostName 127.0.0.1
+  User vagrant
+  Port 2222
+  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking no
+  PasswordAuthentication no
+  IdentityFile /Users/lorin/.vagrant.d/insecure_private_key
+  IdentitiesOnly yes
+  LogLevel FATAL
+
+Host vagrant2
+  HostName 127.0.0.1
+  User vagrant
+  Port 2200
+  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking no
+  PasswordAuthentication no
+  IdentityFile /Users/lorin/.vagrant.d/insecure_private_key
+  IdentitiesOnly yes
+  LogLevel FATAL
+
+Host vagrant3
+  HostName 127.0.0.1
+  User vagrant
+  Port 2201
+  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking no
+  PasswordAuthentication no
+  IdentityFile /Users/lorin/.vagrant.d/insecure_private_key
+  IdentitiesOnly yes
+  LogLevel FATAL</pre>
+
+<p>We can see that <code>vagrant1</code> uses port 2222, <code>vagrant2</code> uses port 2200, and <code>vagrant3</code> uses port 2201.</p>
+
+<p>Modify your <em>hosts</em> file so it looks like this:</p>
+
+<pre data-type="programlisting">vagrant1 ansible_host=127.0.0.1 ansible_port=2222
+vagrant2 ansible_host=127.0.0.1 ansible_port=2200
+vagrant3 ansible_host=127.0.0.1 ansible_port=2201</pre>
+
+<p>Now, make sure that you can access these machines. For example, to get
+information about <a data-type="indexterm" data-primary="network interface, getting information about on Vagrant machines"/>the network interface for <code>vagrant2</code>, run the following:</p>
+
+<pre data-type="programlisting">$ ansible vagrant2 -a "ip addr show dev eth0"</pre>
+
+<p>On my machine, the output looks like this:</p>
+
+<pre data-type="programlisting">vagrant2 | success | rc=0 &gt;&gt;
+2: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP
+group default qlen 1000
+    link/ether 08:00:27:fe:1e:4d brd ff:ff:ff:ff:ff:ff
+    inet 10.0.2.15/24 brd 10.0.2.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a00:27ff:fefe:1e4d/64 scope link
+       valid_lft forever preferred_lft forever</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Behavioral Inventory Parameters</h1>
+
+<p>To describe our Vagrant machines in the Ansible inventory file, we had to
+explicitly <a data-type="indexterm" data-primary="inventory" data-secondary="multiple Vagrant machines" data-startref="ix_invenVag"/><a data-type="indexterm" data-primary="Vagrant" data-secondary="configuring to bring up three hosts" data-startref="ix_Vagmulti"/>specify the hostname (127.0.0.1) and port (2222, 2200, or 2201) that
+Ansible&#8217;s SSH client should connect to.<a data-type="indexterm" id="ix_invenbip" data-primary="inventory" data-secondary="behavioral inventory parameters"/><a data-type="indexterm" id="ix_bip" data-primary="behavioral inventory parameters"/> Ansible calls these variables <em>behavioral inventory parameters</em>, and there are
+several of them you can use when you need to override the Ansible defaults for a
+host (see <a data-type="xref" href="#table3-1"/>).</p>
+<table id="table3-1">
+<caption>Behavioral inventory parameters</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>ansible_host</p></td>
+<td><p>Name of host</p></td>
+<td><p>Hostname or IP address to SSH to</p></td>
+</tr>
+<tr>
+<td><p>ansible_port</p></td>
+<td><p>22</p></td>
+<td><p>Port to SSH to</p></td>
+</tr>
+<tr>
+<td><p>ansible_user</p></td>
+<td><p>Root</p></td>
+<td><p>User to SSH as</p></td>
+</tr>
+<tr>
+<td><p>ansible_password</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>Password to use for SSH authentication</p></td>
+</tr>
+<tr>
+<td><p>ansible_connection</p></td>
+<td><p>smart</p></td>
+<td><p>How Ansible will connect to host (see the following section)</p></td>
+</tr>
+<tr>
+<td><p>ansible_private_key_file</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>SSH private key to use for SSH authentication</p></td>
+</tr>
+<tr>
+<td><p>ansible_shell_type</p></td>
+<td><p>sh</p></td>
+<td><p>Shell to use for commands (see the following section)</p></td>
+</tr>
+<tr>
+<td><p>ansible_python_interpreter</p></td>
+<td><p><em>/usr/bin/python</em></p></td>
+<td><p>Python interpreter on host (see the following section)</p></td>
+</tr>
+<tr>
+<td><p>ansible_*_interpreter</p></td>
+<td><p>(<em>None</em>)</p></td>
+<td><p>Like ansible_python_interpreter for other languages (see the following section)</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>For some of these options, the meaning is obvious from the name, but others require additional explanation.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>ansible_connection</h2>
+
+<p>Ansible supports multiple <em>transports</em>, which are mechanisms that Ansible uses
+to connect to the host.<a data-type="indexterm" data-primary="transports"/><a data-type="indexterm" data-primary="ansible_connection"/><a data-type="indexterm" data-primary="behavioral inventory parameters" data-secondary="ansible_connection"/> The default transport, <code>smart</code>, will check whether the locally installed SSH client supports a feature called <em>ControlPersist</em>.<a data-type="indexterm" data-primary="smart transport"/><a data-type="indexterm" data-primary="SSH" data-secondary="local client support for ControlPersist"/><a data-type="indexterm" data-primary="ControlPersist"/> If the SSH client supports ControlPersist, Ansible will use the local SSH client. If the SSH client doesn&#8217;t support <span class="keep-together">ControlPersist</span>, the smart transport will fall back to using a Python-based SSH client library called <em>Paramiko</em>.<a data-type="indexterm" data-primary="Paramiko"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>ansible_shell_type</h2>
+
+<p>Ansible works by making SSH connections to remote machines and then invoking scripts.<a data-type="indexterm" data-primary="ansible_shell_type"/><a data-type="indexterm" data-primary="behavioral inventory parameters" data-secondary="ansible_shell_type"/><a data-type="indexterm" data-primary="shells" data-secondary="ansible_shell_type parameter"/> By default, Ansible assumes that the remote shell is the Bourne shell located at <em>/bin/sh</em>, and will generate the appropriate command-line parameters that work with Bourne shell.</p>
+
+<p>Ansible also accepts <code>csh</code>, <code>fish</code>, and (on Windows) <code>powershell</code> as valid values
+for this parameter. I&#8217;ve never encountered a need for changing the shell type.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>ansible_python_interpreter</h2>
+
+<p>Because the modules that ship with Ansible are implemented in Python 2, Ansible<a data-type="indexterm" data-primary="behavioral inventory parameters" data-secondary="ansible_python_interpreter"/><a data-type="indexterm" data-primary="ansible_python_interpreter"/>
+needs to know the location of the Python interpreter on the remote machine.<a data-type="indexterm" data-primary="interpreters"/><a data-type="indexterm" data-primary="Python" data-secondary="interpreter, location on remote machine"/> You
+might need to change this if your remote host does not have a Python 2 interpreter
+at <em>/usr/bin/python</em>. For example, if you are managing hosts that<a data-type="indexterm" data-primary="Arch Linux, hosts that run on"/> run Arch
+Linux, you will need to change this to <em>/usr/bin/python2</em>, because Arch Linux
+installs Python 3 at <em>/usr/bin/python</em>, and Ansible modules are not (yet) compatible
+with Python 3.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>ansible_*_interpreter</h2>
+
+<p>If you are using a custom module that is not written in Python, you can use this parameter to specify the location of the interpreter (e.g., <em>/usr/bin/ruby</em>).<a data-type="indexterm" data-primary="ansible_*_interpreter"/>
+We&#8217;ll cover this in <a data-type="xref" href="#custom_modules"/>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Changing Behavioral Parameter Defaults</h2>
+
+<p>You can override some of the behavioral parameter default values in the <code>defaults</code>
+section of the <em>ansible.cfg</em> file (<a data-type="xref" href="#defaults-ansiblecfg"/>). Recall that we used this previously to change
+the default SSH user.<a data-type="indexterm" data-primary="ansible.cfg file" data-secondary="default behavioral inventory parameters, overriding"/><a data-type="indexterm" data-primary="behavioral inventory parameters" data-secondary="changing defaults"/></p>
+<table id="defaults-ansiblecfg">
+<caption>Defaults that can be overridden in ansible.cfg</caption>
+<thead>
+<tr>
+<th>Behavioral inventory parameter</th>
+<th>ansible.cfg option</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>ansible_port</p></td>
+<td><p>remote_port</p></td>
+</tr>
+<tr>
+<td><p>ansible_user</p></td>
+<td><p>remote_user</p></td>
+</tr>
+<tr>
+<td><p>ansible_private_key_file</p></td>
+<td><p>private_key_file</p></td>
+</tr>
+<tr>
+<td><p>ansible_shell_type</p></td>
+<td><p>executable (see the following paragraph)</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>The <em>ansible.cfg</em> <code>executable</code> config option is not exactly the same as the
+<code>ansible_shell_type</code> behavioral inventory parameter.<a data-type="indexterm" data-primary="executable (config option)"/> Instead, the executable
+specifies the full path of the shell to use on the remote machine (e.g.,
+<em>/usr/local/bin/fish</em>). Ansible will look at the name of the base name of this
+path (in the case of <em>/usr/local/bin/fish</em>, the base name is <em>fish</em>) and use that
+as the default value for <code>ansible_shell_type</code>.<a data-type="indexterm" data-primary="inventory" data-secondary="behavioral inventory parameters" data-startref="ix_invenbip"/><a data-type="indexterm" data-primary="behavioral inventory parameters" data-startref="ix_bip"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Groups and Groups and Groups</h1>
+
+<p>When performing configuration tasks, we typically want to perform actions on
+groups of hosts, rather than on an individual host.<a data-type="indexterm" id="ix_group" data-primary="groups"/><a data-type="indexterm" id="ix_invengr" data-primary="inventory" data-secondary="groups"/> Ansible automatically defines a group called <code>all</code> (or <em>*</em>), which includes all
+of the hosts in the inventory. <a data-type="indexterm" data-primary="all group"/>For example, we can check whether the clocks on the
+machines are roughly synchronized by running the following:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible all -a "date"</pre>
+
+<p>or</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible '*' -a "date"</pre>
+
+<p>The output on my system looks like this:</p>
+
+<pre data-type="programlisting">vagrant3 | success | rc=0 &gt;&gt;
+Sun Sep  7 02:56:46 UTC 2014
+
+vagrant2 | success | rc=0 &gt;&gt;
+Sun Sep  7 03:03:46 UTC 2014
+
+vagrant1 | success | rc=0 &gt;&gt;
+Sun Sep  7 02:56:47 UTC 2014</pre>
+
+<p>We can define our own groups in the inventory file.
+Ansible uses the <em>.ini</em> file format for inventory files. In the <em>.ini</em> format,
+configuration values are grouped together into sections.<a data-type="indexterm" data-primary=".ini file format" data-primary-sortas="ini file format"/></p>
+
+<p>Here&#8217;s how to specify that our vagrant hosts are in a group called
+<code>vagrant</code>, along with the other example hosts we mentioned at the beginning of the chapter:</p>
+
+<pre data-type="programlisting">ontario.example.com
+newhampshire.example.com
+maryland.example.com
+virginia.example.com
+newyork.example.com
+quebec.example.com
+rhodeisland.example.com
+
+[vagrant]
+vagrant1 ansible_host=127.0.0.1 ansible_port=2222
+vagrant2 ansible_host=127.0.0.1 ansible_port=2200
+vagrant3 ansible_host=127.0.0.1 ansible_port=2201</pre>
+
+<p>We could have also listed the Vagrant hosts at the top, and then also in a group, like this:</p>
+
+<pre data-type="programlisting">maryland.example.com
+newhampshire.example.com
+newyork.example.com
+ontario.example.com
+quebec.example.com
+rhodeisland.example.com
+vagrant1 ansible_host=127.0.0.1 ansible_port=2222
+vagrant2 ansible_host=127.0.0.1 ansible_port=2200
+vagrant3 ansible_host=127.0.0.1 ansible_port=2201
+virginia.example.com
+
+[vagrant]
+vagrant1
+vagrant2
+vagrant3</pre>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Example: Deploying a Django App</h2>
+
+<p>Imagine you&#8217;re responsible for deploying a Django-based web application that
+processes long-running jobs.<a data-type="indexterm" id="ix_invengrDJ" data-primary="inventory" data-secondary="groups" data-tertiary="deploying a Django app (example)"/><a data-type="indexterm" id="ix_groupex" data-primary="groups" data-secondary="example, deploying a Django app"/><a data-type="indexterm" id="ix_Djangoapp" data-primary="Django" data-secondary="example, deploying a Django app"/> The app needs to support the following services:</p>
+
+<ul>
+<li>
+<p>The actual Django web app itself, run by a Gunicorn HTTP server</p>
+</li>
+<li>
+<p>An Nginx web server, which will sit in front of Gunicorn and serve static
+assets</p>
+</li>
+<li>
+<p>A Celery task queue that will execute long-running jobs on behalf of the web
+app</p>
+</li>
+<li>
+<p>A RabbitMQ message queue that serves as the backend for Celery</p>
+</li>
+<li>
+<p>A Postgres database that serves as the persistent store</p>
+</li>
+</ul>
+<div data-type="note">
+<p>In later chapters, we will work through a detailed example of deploying this
+kind of Django-based application, although our example won&#8217;t use Celery or RabbitMQ.</p>
+</div>
+
+<p>We need to deploy this application into different types of environments: production (the real thing), staging (for testing on hosts that our team has shared access to), and Vagrant (for local testing).</p>
+
+<p>When we deploy to production,<a data-type="indexterm" data-primary="production, deploying Django app to"/> we want the entire system to respond quickly and be reliable, so we do the following:</p>
+
+<ul>
+<li>
+<p>Run the web application on multiple hosts for better performance and put a load balancer in front of them.</p>
+</li>
+<li>
+<p>Run task queue servers on multiple hosts for better performance.</p>
+</li>
+<li>
+<p>Put Gunicorn, Celery, RabbitMQ, and Postgres all on separate servers.</p>
+</li>
+<li>
+<p>Use two Postgres hosts, a primary and a replica.</p>
+</li>
+</ul>
+
+<p>Assuming we have one load balancer, three web servers, three task queues, one RabbitMQ server, and two database servers, that&#8217;s 10 hosts we need to deal with.<a data-type="indexterm" data-primary="load balancers"/></p>
+
+<p>For our staging environment, imagine that we want to use fewer hosts than we do
+in production in order <a data-type="indexterm" data-primary="staging environment, deploying Django app to"/>to save costs, especially since the staging environment
+is going to see a lot less activity than production. Let&#8217;s say we decide to use only two hosts for staging; we&#8217;ll put the web server and task queue on one
+staging host, and RabbitMQ and Postgres on the other.</p>
+
+<p>For our local Vagrant environment, we decide to use three servers: one for the web app, one for a task queue, and one that will contain RabbitMQ and Postgres.<a data-type="indexterm" data-primary="Vagrant" data-secondary="deploying Django app to"/></p>
+
+<p><a data-type="xref" href="#django_inventory_file"/> shows a possible inventory file that groups our servers by environment (production, staging, Vagrant) and by function (web server, task queue, etc.).</p>
+<div id="django_inventory_file" data-type="example">
+<h5>Inventory file for deploying a Django app</h5>
+
+<pre data-type="programlisting">[production]
+delaware.example.com
+georgia.example.com
+maryland.example.com
+newhampshire.example.com
+newjersey.example.com
+newyork.example.com
+northcarolina.example.com
+pennsylvania.example.com
+rhodeisland.example.com
+virginia.example.com
+
+[staging]
+ontario.example.com
+quebec.example.com
+
+[vagrant]
+vagrant1 ansible_host=127.0.0.1 ansible_port=2222
+vagrant2 ansible_host=127.0.0.1 ansible_port=2200
+vagrant3 ansible_host=127.0.0.1 ansible_port=2201
+
+[lb]
+delaware.example.com
+
+[web]
+georgia.example.com
+newhampshire.example.com
+newjersey.example.com
+ontario.example.com
+vagrant1
+
+[task]
+newyork.example.com
+northcarolina.example.com
+maryland.example.com
+ontario.example.com
+vagrant2
+
+[rabbitmq]
+pennsylvania.example.com
+quebec.example.com
+vagrant3
+
+[db]
+rhodeisland.example.com
+virginia.example.com
+quebec.example.com
+vagrant3</pre></div>
+
+<p>We could have first listed all of the servers at the top of the inventory file,
+without specifying a group, but that isn&#8217;t necessary, and that would&#8217;ve made
+this file even longer.</p>
+
+<p>Note that we needed to specify the behavioral inventory parameters for the Vagrant instances only once.<a data-type="indexterm" data-primary="groups" data-secondary="example, deploying a Django app" data-startref="ix_groupex"/><a data-type="indexterm" data-primary="Django" data-secondary="example, deploying a Django app" data-startref="ix_Djangoapp"/><a data-type="indexterm" data-primary="inventory" data-secondary="groups" data-tertiary="deploying a Django app (example)" data-startref="ix_invengrDJ"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Aliases and Ports</h2>
+
+<p>We described our Vagrant <a data-type="indexterm" data-primary="groups" data-secondary="aliases and ports"/>hosts like this:</p>
+
+<pre data-type="programlisting">[vagrant]
+vagrant1 ansible_host=127.0.0.1 ansible_port=2222
+vagrant2 ansible_host=127.0.0.1 ansible_port=2200
+vagrant3 ansible_host=127.0.0.1 ansible_port=2201</pre>
+
+<p>The names <code>vagrant1</code>, <code>vagrant2</code>, and <code>vagrant3</code> here are <em>aliases</em>.<a data-type="indexterm" data-primary="aliases (for hostnames)"/><a data-type="indexterm" data-primary="hostnames"/> They are not the real
+hostnames, but instead are useful names for referring to these hosts.</p>
+
+<p>Ansible supports using <code>&lt;hostname&gt;:&lt;port&gt;</code> syntax when specifying hosts,<a data-type="indexterm" data-primary="ports" data-secondary="in hostnames"/> so we
+could replace the line that contains <code>vagrant1</code> with <code>127.0.0.1:2222</code>. However, we can&#8217;t actually run what you see in <a data-type="xref" href="#vagrant-doesnt-work"/>.</p>
+<div id="vagrant-doesnt-work" data-type="example">
+<h5>This doesn&#8217;t work</h5>
+
+<pre data-type="programlisting">[vagrant]
+127.0.0.1:2222
+127.0.0.1:2200
+127.0.0.1:2201</pre></div>
+
+<p>The reason is that Ansible&#8217;s inventory can associate only a single host with <em>127.0.0.1</em>, so the Vagrant group would contain only one host instead of three.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Groups of Groups</h2>
+
+<p>Ansible also allows you to define groups that are made up of other groups. For
+example, both the web servers and the task queue servers will need to have
+Django and its dependencies.<a data-type="indexterm" data-primary="groups" data-secondary="of groups"/><a data-type="indexterm" data-primary="inventory" data-secondary="groups" data-tertiary="groups of groups"/> We might find it useful to define a <code>django</code> group that
+contains both of these two groups. You would add this to the
+inventory file:</p>
+
+<pre data-type="programlisting">[django:children]
+web
+task</pre>
+
+<p>Note that the syntax changes when you are specifying a group of groups, as
+opposed to a group of hosts. That&#8217;s so Ansible knows to interpret <code>web</code> and
+<code>task</code> as groups and not as hosts.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Numbered Hosts (Pets versus Cattle)</h2>
+
+<p>The inventory file shown in <a data-type="xref" href="#django_inventory_file"/> looks complex.<a data-type="indexterm" data-primary="numbered hosts"/><a data-type="indexterm" data-primary="inventory" data-secondary="groups" data-tertiary="numbered hosts (pets vs. cattle)"/> In reality, it describes
+only 15 hosts, which doesn&#8217;t sound like a large number in this cloudy
+scale-out world. However, even dealing with 15 hosts in the inventory file
+can be cumbersome, because each host has a completely different hostname.<a data-type="indexterm" data-primary="servers" data-secondary="treating as pets versus cattle"/><a data-type="indexterm" data-primary="pets versus cattle"/><a data-type="indexterm" data-primary="cattle versus pets"/></p>
+
+<p>Bill Baker of Microsoft came up with the distinction between treating servers as
+<em>pets</em> versus treating them like <em>cattle</em>.<span data-type="footnote">This term has been popularized by <a href="http://bit.ly/1P3nHB2">Randy Bias of Cloudscaling</a>.</span> We
+give pets distinctive names, and we treat and care for them as individuals. On
+the other hand, when we discuss cattle, we refer to them by identification number.</p>
+
+<p>The cattle approach is much more scalable, and Ansible supports it well by
+supporting numeric patterns. For example, if your 20 servers are named <em>web1.example.com</em>, <em>web2.example.com</em>, and so on, then you can specify them in the inventory file like this:</p>
+
+<pre data-type="programlisting">[web]
+web[1:20].example.com</pre>
+
+<p>If you prefer to have a leading zero (e.g., <em>web01.example.com</em>), then specify a
+leading zero in the range, like this:</p>
+
+<pre data-type="programlisting">[web]
+web[01:20].example.com</pre>
+
+<p>Ansible also supports using alphabetic characters to specify ranges.<a data-type="indexterm" data-primary="alphabetic characters, specifying ranges with"/> If you
+want to use the convention <em>web-a.example.com</em>, <em>web-b.example.com</em>, and so on, for your 20 servers, then you can do this:</p>
+
+<pre data-type="programlisting">[web]
+web-[a-t].example.com</pre>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Hosts and Group Variables: Inside the Inventory</h1>
+
+<p>Recall how we specified behavioral inventory <a data-type="indexterm" data-primary="groups" data-startref="ix_group"/><a data-type="indexterm" data-primary="inventory" data-secondary="groups" data-startref="ix_invengr"/>parameters for Vagrant hosts:</p>
+
+<pre data-type="programlisting">vagrant1 ansible_host=127.0.0.1 ansible_port=2222
+vagrant2 ansible_host=127.0.0.1 ansible_port=2200
+vagrant3 ansible_host=127.0.0.1 ansible_port=2201</pre>
+
+<p>Those parameters are variables that have special meaning to Ansible.<a data-type="indexterm" data-primary="variables" data-secondary="host and group variables in inventory"/><a data-type="indexterm" data-primary="inventory" data-secondary="host and group variables in"/> We can also
+define arbitrary variable names and associated values on hosts. For example,
+we could define a variable named <code>color</code>  and set it to a value for each server:</p>
+
+<pre data-type="programlisting">newhampshire.example.com color=red
+maryland.example.com color=green
+ontario.example.com color=blue
+quebec.example.com color=purple</pre>
+
+<p>This variable can then be used in a playbook, just like any other variable.</p>
+
+<p>Personally, I don&#8217;t often attach variables to specific hosts. On the other hand,
+I often associate variables with groups.</p>
+
+<p>Circling back to our Django example, the web application and task queue service
+need to communicate with RabbitMQ and Postgres. We&#8217;ll assume that access to the
+Postgres database is secured both at the network layer (so only the web
+application and the task queue can reach the database) as well as by
+username and password, whereas RabbitMQ is secured only by the network layer.</p>
+
+<p>To set everything up, we need to do the following:</p>
+
+<ul>
+<li>
+<p>Configure the web servers with the hostname, port, username, password of the primary Postgres server, and name of the database.</p>
+</li>
+<li>
+<p>Configure the task queues with the hostname, port, username, password of the primary Postgres server, and the name of the database.</p>
+</li>
+<li>
+<p>Configure the web servers with the hostname and port of the RabbitMQ server.</p>
+</li>
+<li>
+<p>Configure the task queues with the hostname and port of the RabbitMQ server.</p>
+</li>
+<li>
+<p>Configure the primary Postgres server with the hostname, port, and username and password of the replica Postgres server (production only).</p>
+</li>
+</ul>
+
+<p>This configuration info varies by environment, so it makes sense to define these as group variables on the production,<a data-type="indexterm" data-primary="groups" data-secondary="specifying group variables in inventory"/> staging, and Vagrant groups. <a data-type="xref" href="#spec-group-vars"/> shows one way to specify this information as group variables in the inventory file.</p>
+<div id="spec-group-vars" data-type="example">
+<h5>Specifying group variables in inventory</h5>
+
+<pre data-type="programlisting">[all:vars]
+ntp_server=ntp.ubuntu.com
+
+[production:vars]
+db_primary_host=rhodeisland.example.com
+db_primary_port=5432
+db_replica_host=virginia.example.com
+db_name=widget_production
+db_user=widgetuser
+db_password=pFmMxcyD;Fc6)6
+rabbitmq_host=pennsylvania.example.com
+rabbitmq_port=5672
+
+
+[staging:vars]
+db_primary_host=quebec.example.com
+db_primary_port=5432
+db_name=widget_staging
+db_user=widgetuser
+db_password=L@4Ryz8cRUXedj
+rabbitmq_host=quebec.example.com
+rabbitmq_port=5672
+
+[vagrant:vars]
+db_primary_host=vagrant3
+db_primary_port=5432
+db_name=widget_vagrant
+db_user=widgetuser
+db_password=password
+rabbitmq_host=vagrant3
+rabbitmq_port=5672</pre></div>
+
+<p>Note how group variables are organized into sections named <code>[&lt;group name&gt;:vars]</code>. Also note how we took advantage of the <code>all</code> group that Ansible creates automatically to specify variables that don&#8217;t change across hosts.<a data-type="indexterm" data-primary="all group"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Host and Group Variables: In Their Own Files</h1>
+
+<p>The inventory file is a reasonable place to put host and group variables if you
+don&#8217;t have too many hosts.<a data-type="indexterm" data-primary="inventory" data-secondary="host and group variables in their own files"/><a data-type="indexterm" data-primary="variables" data-secondary="host and group variables in their own files"/> But as your inventory gets larger, it gets more
+difficult to manage variables this way.<a data-type="indexterm" data-primary="groups" data-secondary="group variables in their own files"/></p>
+
+<p>Additionally, though Ansible variables can hold Booleans, strings, lists, and dictionaries, in an inventory file, you can specify only Booleans and strings.</p>
+
+<p>Ansible offers a more scalable approach to keep track of host and group
+variables: you can create a separate variable file for each host and each group.
+Ansible expects these variable files to be in YAML format.</p>
+
+<p>Ansible looks for host variable files in a directory called <em>host_vars</em>
+and group variable files in a directory called <em>group_vars</em>. <a data-type="indexterm" data-primary="host variable files"/>Ansible expects
+these directories to be either in the directory that contains your playbooks or
+in the directory adjacent to your inventory file. In our case, those two
+directories are the same.</p>
+
+<p>For example, if I had a directory containing my playbooks at
+<em>/home/lorin/playbooks/</em> with an inventory file at
+<em>/home/lorin/playbooks/hosts</em>, then I would put variables for
+the <em>quebec.example.com</em> host in the file <em>/home/lorin/playbooks/host_vars/quebec.example.com</em>, and
+I would put variables for the production group in the file
+<em>/home/lorin/playbooks/group_vars/production</em>.</p>
+
+<p><a data-type="xref" href="#group-vars-prod"/> shows what the <em>/home/lorin/playbooks/group_vars/production</em> file would
+look like.</p>
+<div id="group-vars-prod" data-type="example">
+<h5>group_vars/production</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">db_primary_host: rhodeisland.example.com
+db_primary_port=5432
+db_replica_host: virginia.example.com
+db_name: widget_production
+db_user: widgetuser
+db_password: pFmMxcyD;Fc6)6
+rabbitmq_host:pennsylvania.example.com
+rabbitmq_port=5672</pre></div>
+
+<p>Note that we could also use YAML dictionaries to represent these
+values, as<a data-type="indexterm" data-primary="YAML" data-secondary="using dictionaries to represent group variables"/> shown in <a data-type="xref" href="#prod-with-dicts"/>.</p>
+<div id="prod-with-dicts" data-type="example">
+<h5>group_vars/production, with dictionaries</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">db:
+    user: widgetuser
+    password: pFmMxcyD;Fc6)6
+    name: widget_production
+    primary:
+        host: rhodeisland.example.com
+        port: 5432
+    replica:
+        host: virginia.example.com
+        port: 5432
+
+rabbitmq:
+    host: pennsylvania.example.com
+    port: 5672</pre></div>
+
+<p>If we choose YAML dictionaries, that changes the way we access the variables:</p>
+
+<pre data-type="programlisting">{{ db_primary_host }}</pre>
+
+<p>versus:</p>
+
+<pre data-type="programlisting">{{ db.primary.host }}</pre>
+
+<p>If you want to break things out even further, Ansible will allow you to define <em>group_vars/production</em> as a directory instead of a file, and let you place multiple YAML files that contain variable definitions. For example, we could put the database-related variables in one file and the RabbitMQ-related variables in another file, as shown in Examples <a href="#example3-9">3-9</a> and <a href="#example3-10">3-10</a>.</p>
+<div id="example3-9" data-type="example">
+<h5>group_vars/production/db</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">db:
+    user: widgetuser
+    password: pFmMxcyD;Fc6)6
+    name: widget_production
+    primary:
+        host: rhodeisland.example.com
+        port: 5432
+    replica:
+        host: virginia.example.com
+        port: 5432</pre></div>
+<div id="example3-10" data-type="example">
+<h5>group_vars/production/rabbitmq</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">rabbitmq:
+    host: pennsylvania.example.com
+    port: 6379</pre></div>
+
+<p>In general, I find it&#8217;s better to keep things simple rather than split
+variables out across too many files.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Dynamic Inventory</h1>
+
+<p>Up until this point, we&#8217;ve been explicitly specifying all of our hosts in our hosts inventory file.<a data-type="indexterm" id="ix_dyninv" data-primary="dynamic inventory"/><a data-type="indexterm" id="ix_invendyn" data-primary="inventory" data-secondary="dynamic"/> However, you might have a system external to Ansible that keeps track of your hosts. For example, if your hosts run on Amazon EC2, then EC2 tracks information about your hosts for you, and you can retrieve this information through EC2's web interface, its Query API, or through command-line tools such as <code>awscli</code>. Other cloud providers have similar interfaces. Or, if you&#8217;re managing your own servers and are using an automated provisioning system such as Cobbler or Ubuntu Metal as a Service (MAAS), then your provisioning system is already keeping track of your servers. Or, maybe you have one of those fancy configuration management databases (CMDBs) where all of this information lives.</p>
+
+<p>You don&#8217;t want to manually duplicate this information in your hosts file, because eventually that file will not jibe with your external
+system, which is the true source of information about your hosts.  Ansible supports a feature called <em>dynamic inventory</em> that allows you to avoid this duplication.</p>
+
+<p>If the inventory file is marked executable, <a data-type="indexterm" data-primary="executable, marking inventory file as"/>Ansible will assume it is a dynamic inventory script and will execute the file instead of reading it.</p>
+<div data-type="tip">
+<p>To mark a file as<a data-type="indexterm" data-primary="chmod &#x2b;x command"/> executable, use the <code>chmod +x</code> command. For example:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ chmod +x dynamic.py</pre>
+</div>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>The Interface for a Dynamic Inventory Script</h2>
+
+<p>An Ansible dynamic inventory script must support<a data-type="indexterm" data-primary="dynamic inventory" data-secondary="interface for dynamic inventory scripts"/><a data-type="indexterm" data-primary="--host=&lt;hostname&gt; command-line flag" data-primary-sortas="host"/><a data-type="indexterm" data-primary="--list command-line flag" data-primary-sortas="list"/> two command-line flags:</p>
+
+<ul>
+<li>
+<p><code>--host=&lt;hostname&gt;</code> for showing host details</p>
+</li>
+<li>
+<p><code>--list</code> for listing groups</p>
+</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Showing host details</h3>
+
+<p>To get the details of the individual host, Ansible will call <a data-type="indexterm" data-primary="dynamic inventory" data-secondary="interface for dynamic inventory scripts" data-tertiary="showing host details"/>the inventory
+script like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ./dynamic.py --host=vagrant2</pre>
+
+<p>The output should contain any host-specific variables, including behavioral
+parameters, like this:</p>
+
+<pre data-type="programlisting" data-code-language="json">{ "ansible_host": "127.0.0.1", "ansible_port": 2200,
+  "ansible_user": "vagrant"}</pre>
+
+<p>The output is a single JSON object; the names are variable names, and the
+values are the variable values.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Listing groups</h3>
+
+<p>Dynamic inventory scripts need to be able to list all of the groups, and details
+about the individual hosts.<a data-type="indexterm" data-primary="dynamic inventory" data-secondary="interface for dynamic inventory scripts" data-tertiary="listing groups"/><a data-type="indexterm" data-primary="groups" data-secondary="listing in dynamic inventory scripts"/> For example, if our script is called <em>dynamic.py</em>,
+Ansible will call it like this to get a list of all of the groups:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ./dynamic.py --list</pre>
+
+<p>The output should look something like this:</p>
+
+<pre data-type="programlisting" data-code-language="json">{"production": ["delaware.example.com", "georgia.example.com",
+                "maryland.example.com", "newhampshire.example.com",
+                "newjersey.example.com", "newyork.example.com",
+                "northcarolina.example.com", "pennsylvania.example.com",
+                "rhodeisland.example.com", "virginia.example.com"],
+ "staging": ["ontario.example.com", "quebec.example.com"],
+ "vagrant": ["vagrant1", "vagrant2", "vagrant3"],
+ "lb": ["delaware.example.com"],
+ "web": ["georgia.example.com", "newhampshire.example.com",
+         "newjersey.example.com", "ontario.example.com", "vagrant1"]
+ "task": ["newyork.example.com", "northcarolina.example.com",
+          "ontario.example.com", "vagrant2"],
+ "rabbitmq": ["pennsylvania.example.com", "quebec.example.com", "vagrant3"],
+ "db": ["rhodeisland.example.com", "virginia.example.com", "vagrant3"]
+}</pre>
+
+<p>The output is a single JSON object; the names are Ansible group names, and
+the values are arrays of hostnames.</p>
+
+<p>As an optimization, the <code>--list</code> command can contain the values of the host
+variables for all of the hosts, which saves Ansible the trouble of making a
+separate <code>--host</code> invocation to retrieve the variables for the individual hosts.</p>
+
+<p>To take advantage of this optimization, the <code>--list</code> command should return a key
+named <code>_meta</code> that contains the variables for each host,<a data-type="indexterm" data-primary="_meta key"/> in this form:</p>
+
+<pre data-type="programlisting" data-code-language="json">"_meta" :
+  { "hostvars" :
+    "vagrant1" : { "ansible_host": "127.0.0.1", "ansible_port": 2222,
+                   "ansible_user": "vagrant"},
+    "vagrant2": { "ansible_host": "127.0.0.1", "ansible_port": 2200,
+                   "ansible_user": "vagrant"},
+    ...
+}</pre>
+</section>
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Writing a Dynamic Inventory Script</h2>
+
+<p>One of the handy features of Vagrant is that you can see which machines are currently running by using the <code>vagrant status</code> command.<a data-type="indexterm" data-primary="dynamic inventory" data-secondary="writing a script"/><a data-type="indexterm" data-primary="vagrant status command"/> Assuming we have a Vagrant file that looks like <a data-type="xref" href="#VAGRANTFILE_WITH_THREE_SERVERS"/>, if we run <code>vagrant status</code>, the output would look like <a data-type="xref" href="#VAGRANT_STATUS"/>.</p>
+<div id="VAGRANT_STATUS" data-type="example">
+<h5>Output of vagrant status</h5>
+
+<pre data-type="programlisting" data-code-language="console">$ vagrant status
+Current machine states:
+
+vagrant1                  running (virtualbox)
+vagrant2                  running (virtualbox)
+vagrant3                  running (virtualbox)
+
+This environment represents multiple VMs. The VMs are all listed
+above with their current state. For more information about a specific
+VM, run `vagrant status NAME`.</pre></div>
+
+<p>Because Vagrant already keeps track of machines for us, there&#8217;s no need for us to
+write a list of the Vagrant machines in an Ansible inventory file. Instead, we can write a
+dynamic inventory script that queries Vagrant about which machines are
+running. Once we&#8217;ve set up a dynamic inventory script for Vagrant, even if we alter our
+Vagrantfile to run different numbers of Vagrant machines, we won&#8217;t need to edit
+an Ansible inventory file.</p>
+
+<p>Let&#8217;s work through an example of creating a dynamic inventory script
+that retrieves the details about hosts from Vagrant.<span data-type="footnote">Yes, there&#8217;s a Vagrant dynamic inventory script included with Ansible already, but it&#8217;s helpful to go through the exercise.</span> Our dynamic inventory script is going to need to invoke the <code>vagrant status</code>
+command. The output shown in <a data-type="xref" href="#VAGRANT_STATUS"/> is designed for humans to read,
+rather than for machines to parse.<a data-type="indexterm" data-primary="vagrant status --machine-readable command"/> We can get a list of running
+hosts in a format that is easier to parse with the <code>--machine-readable</code> flag, like so:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ vagrant status --machine-readable</pre>
+
+<p>The output looks like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">1474694768,vagrant1,metadata,provider,virtualbox
+1474694768,vagrant2,metadata,provider,virtualbox
+1474694768,vagrant3,metadata,provider,virtualbox
+1410577818,vagrant1,state,running
+1410577818,vagrant1,state-human-short,running
+1410577818,vagrant1,state-human-long,The VM is running. To stop this VM%!(VAGRANT
+_COMMA) you can run `vagrant halt` to\nshut it down forcefully%!(VAGRANT_COMMA)
+or you can run `vagrant suspend` to simply\nsuspend the virtual machine. In
+either case%!(VAGRANT_COMMA) to restart it again%!(VAGRANT_COMMA)\nsimply run
+`vagrant up`.
+1410577818,vagrant2,state,running
+1410577818,vagrant2,state-human-short,running
+1410577818,vagrant2,state-human-long,The VM is running. To stop this VM%!(VAGRANT
+_COMMA) you can run `vagrant halt` to\nshut it down forcefully%!(VAGRANT_COMMA)
+or you can run `vagrant suspend` to simply\nsuspend the virtual machine. In
+either case%!(VAGRANT_COMMA) to restart it again%!(VAGRANT_COMMA)\nsimply run
+`vagrant up`.
+1410577818,vagrant3,state,running
+1410577818,vagrant3,state-human-short,running
+1410577818,vagrant3,state-human-long,The VM is running. To stop this VM%!(VAGRANT
+_COMMA) you can run `vagrant halt` to\nshut it down forcefully%!(VAGRANT_COMMA)
+or you can run `vagrant suspend` to simply\nsuspend the virtual machine. In
+either case%!(VAGRANT_COMMA) to restart it again%!(VAGRANT_COMMA)\nsimply
+run `vagrant up`.</pre>
+
+<p>To get details about <a data-type="indexterm" data-primary="vagrant ssh-config command"/>a particular Vagrant machine, say, <code>vagrant2</code>, we would run this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ vagrant ssh-config vagrant2</pre>
+
+<p>The output looks like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">Host vagrant2
+  HostName 127.0.0.1
+  User vagrant
+  Port 2200
+  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking no
+  PasswordAuthentication no
+  IdentityFile /Users/lorin/.vagrant.d/insecure_private_key
+  IdentitiesOnly yes
+  LogLevel FATAL</pre>
+
+<p>Our dynamic inventory script will need to call these commands, parse the outputs,
+and output the appropriate JSON. We can use the Paramiko library to parse the
+output of <code>vagrant ssh-config</code>. <a data-type="indexterm" data-primary="Paramiko" data-secondary="using to parse output of vagrant ssh-config"/><a data-type="indexterm" data-primary="vagrant ssh-config command" data-secondary="parsing output with Paramiko library"/>Here&#8217;s an interactive Python session that shows
+how to use the Paramiko library to do this:</p>
+
+<pre data-type="programlisting" data-code-language="python">&gt;&gt;&gt; import subprocess
+&gt;&gt;&gt; import paramiko
+&gt;&gt;&gt; cmd = "vagrant ssh-config vagrant2"
+&gt;&gt;&gt; p = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE)
+&gt;&gt;&gt; config = paramiko.SSHConfig()
+&gt;&gt;&gt; config.parse(p.stdout)
+&gt;&gt;&gt; config.lookup("vagrant2")
+{'identityfile': ['/Users/lorin/.vagrant.d/insecure_private_key'],
+ 'loglevel': 'FATAL', 'hostname': '127.0.0.1', 'passwordauthentication': 'no',
+ 'identitiesonly': 'yes', 'userknownhostsfile': '/dev/null', 'user': 'vagrant',
+ 'stricthostkeychecking': 'no', 'port': '2200'}</pre>
+<div data-type="note">
+<p>You need to install the Python Paramiko library in order to use this script. You can do <a data-type="indexterm" data-primary="Paramiko" data-secondary="installing with pip"/>this with pip:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ sudo pip install paramiko</pre>
+</div>
+
+<p><a data-type="xref" href="#vagrant-py"/> shows our complete <em>vagrant.py</em> script.</p>
+<div id="vagrant-py" data-type="example">
+<h5>vagrant.py</h5>
+
+<pre data-type="programlisting" data-code-language="python"></pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Preexisting Inventory Scripts</h2>
+
+<p>Ansible ships with several dynamic inventory scripts that you can use.<a data-type="indexterm" data-primary="dynamic inventory" data-secondary="preexisting inventory scripts"/>
+I can never figure out where my package manager installs these files,
+so I just grab the ones I need directly off GitHub.<a data-type="indexterm" data-primary="GitHub repositories" data-secondary="for Ansible dynamic inventory scripts"/> You can grab these by
+going to the <a href="https://github.com/ansible/ansible">Ansible GitHub repo</a> and
+browsing to the <em>contrib/inventory</em> directory.</p>
+
+<p>Many of these inventory scripts have an accompanying configuration file. In
+<a data-type="xref" href="#cloud"/>, we&#8217;ll discuss the Amazon EC2 inventory script in more detail.<a data-type="indexterm" data-primary="dynamic inventory" data-startref="ix_dyninv"/><a data-type="indexterm" data-primary="inventory" data-secondary="dynamic" data-startref="ix_invendyn"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Breaking the Inventory into Multiple Files</h1>
+
+<p>If you want to have both a regular inventory file and a dynamic inventory script
+(or, really, any combination of static and dynamic inventory files), just put them all in the same directory and configure Ansible to use that directory as the inventory.<a data-type="indexterm" data-primary="inventory" data-secondary="breaking into multiple files"/><a data-type="indexterm" data-primary="ansible.cfg file" data-secondary="inventory parameter"/><a data-type="indexterm" data-primary="ansible-doc command-line tool" data-secondary="-i flag"/> You can do this either via the <code>inventory</code> parameter in <em>ansible.cfg</em> or by using the <code>-i</code> flag on the command line. Ansible will process all of the files and merge the results into a single inventory.</p>
+
+<p>For example, our directory structure could look like this: <em>inventory/hosts</em> and <em>inventory/vagrant.py</em>.</p>
+
+<p>Our <em>ansible.cfg</em> file would contain these lines:</p>
+
+<pre data-type="programlisting" data-code-language="ini">[defaults]
+inventory = inventory</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Adding Entries at Runtime with add_host and group_by</h1>
+
+<p>Ansible will let you add hosts and groups to the inventory during the execution
+of a playbook.<a data-type="indexterm" id="ix_invenadd" data-primary="inventory" data-secondary="adding entries at runtime with add_host and group_by"/></p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>add_host</h2>
+
+<p>The <code>add_host</code> module adds a host to the inventory.<a data-type="indexterm" data-primary="add_host module"/><a data-type="indexterm" data-primary="hosts" data-secondary="adding to inventory at runtime with add_host"/><a data-type="indexterm" data-primary="inventory" data-secondary="adding entries at runtime with add_host and group_by" data-tertiary="add_host module"/> This module is useful if you&#8217;re
+using Ansible to provision new virtual machine instances inside an
+infrastructure-as-a-service cloud.</p>
+<aside data-type="sidebar">
+<h5>Why Do I Need add_host if I&#8217;m Using Dynamic Inventory?</h5>
+<p>Even if you&#8217;re using dynamic inventory scripts, the <code>add_host</code> module is useful
+for scenarios where you start up new virtual machine instances and
+configure those instances in the same playbook.</p>
+
+<p>If a new host comes online while a playbook is executing, the dynamic inventory
+script will not pick up this new host. This is because the dynamic inventory script
+is executed at the beginning of the playbook, so if any new hosts are added
+while the playbook is executing, Ansible won&#8217;t see them.</p>
+
+<p>We&#8217;ll cover a cloud computing example that uses the <code>add_host</code> module in <a data-type="xref" href="#cloud"/>.</p>
+</aside>
+
+<p>Invoking the module looks like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">add_host name=hostname groups=web,staging myvar=myval</pre>
+
+<p>Specifying the list of groups and additional variables is optional.</p>
+
+<p>Here&#8217;s the <code>add_host</code> command in action, bringing up a new Vagrant machine and
+then configuring the machine:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: Provision a vagrant machine
+  hosts: localhost
+  vars:
+    box: trusty64
+  tasks:
+    - name: create a Vagrantfile
+      command: vagrant init {{ box }} creates=Vagrantfile
+
+    - name: Bring up a vagrant machine
+      command: vagrant up
+
+    - name: add the vagrant machine to the inventory
+      add_host: &gt;
+            name=vagrant
+            ansible_host=127.0.0.1
+            ansible_port=2222
+            ansible_user=vagrant
+            ansible_private_key_file=/Users/lorin/.vagrant.d/
+            insecure_private_key
+
+- name: Do something to the vagrant machine
+  hosts: vagrant
+  become: yes
+  tasks:
+    # The list of tasks would go here
+    - ...</pre>
+<div data-type="note">
+<p>The <code>add_host</code> module adds the host only for the duration of the execution of the playbook. It does not modify your inventory file.</p>
+</div>
+
+<p>When I do provisioning inside my playbooks, I like to split it into two
+plays. The first play runs against <code>localhost</code> and provisions the hosts, and the
+second play configures the hosts.</p>
+
+<p>Note that we use the <code>creates=Vagrantfile</code> parameter in this task:</p>
+
+<pre data-type="programlisting">- name: create a Vagrantfile
+  command: vagrant init {{ box }} creates=Vagrantfile</pre>
+
+<p>This tells Ansible that if the <em>Vagrantfile</em> file is present, the host
+is already in the correct state, and there is no need to run the command again. It&#8217;s a way of achieving idempotence in a playbook that invokes the command module, by ensuring that the (potentially nonidempotent) command is run only once.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>group_by</h2>
+
+<p>Ansible also allows you to create new groups during execution of a playbook,
+using the <code>group_by</code> module.<a data-type="indexterm" data-primary="inventory" data-secondary="adding entries at runtime with add_host and group_by" data-tertiary="group_by module"/><a data-type="indexterm" data-primary="group_by module"/> This lets you create a group based on the
+value of a variable that has been set on each host, which Ansible refers to as
+a <em>fact</em>.<span data-type="footnote">We cover facts in more detail in <a data-type="xref" href="#variables_and_facts"/>.</span></p>
+
+<p>If Ansible fact gathering is enabled, Ansible will associate a set of
+variables with a host. For example, the <code>ansible_machine</code> variable will be
+<code>i386</code> for 32-bit x86 machines and <code>x86_64</code> for 64-bit x86 machines. If Ansible
+is interacting with a mix of such hosts, we can create <code>i386</code> and <code>x86_64</code>
+groups with the task.</p>
+
+<p>Or, if we want to group our hosts by<a data-type="indexterm" data-primary="Linux distributions" data-secondary="creating ad hoc groups based on"/> Linux distribution (e.g., Ubuntu, CentOS),
+we can use the <code>ansible_distribution</code> fact:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create groups based on Linux distribution
+  group_by: key={{ ansible_distribution }}</pre>
+
+<p>In <a data-type="xref" href="#GROUP_BY_EXAMPLE"/>, we use <code>group_by</code> to create separate
+groups for our Ubuntu hosts and our CentOS hosts, and then we use the <code>apt</code>
+module to install packages onto Ubuntu and the <code>yum</code> module to install packages
+into CentOS.</p>
+<div id="GROUP_BY_EXAMPLE" data-type="example">
+<h5>Creating ad hoc groups based on Linux distribution</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: group hosts by distribution
+  hosts: myhosts
+  gather_facts: True
+  tasks:
+    - name: create groups based on distro
+      group_by: key={{ ansible_distribution }}
+
+- name: do something to Ubuntu hosts
+  hosts: Ubuntu
+  tasks:
+    - name: install htop
+      apt: name=htop
+    # ...
+
+- name: do something else to CentOS hosts
+  hosts: CentOS
+  tasks:
+    - name: install htop
+      yum: name=htop
+    # ...</pre></div>
+
+<p>Although using <code>group_by</code> is one way to achieve conditional behavior in Ansible,
+I&#8217;ve never found much use for it. In <a data-type="xref" href="#deploying_mezzanine"/>, you&#8217;ll see an
+example of how to use the <code>when</code> task parameter to take different
+actions based on variables.</p>
+
+<p>That about does it for Ansible&#8217;s inventory. The next chapter covers how to use variables. See <a data-type="xref" href="#connections-ssh"/> for more details about <em>ControlPersist</em>, also known as SSH multiplexing.<a data-type="indexterm" data-primary="inventory" data-secondary="adding entries at runtime with add_host and group_by" data-startref="ix_invenadd"/><a data-type="indexterm" data-primary="inventory" data-startref="ix_inven"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+</section>

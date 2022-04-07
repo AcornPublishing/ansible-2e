@@ -1,0 +1,226 @@
+<section data-type="appendix" id="IAM">
+<h1>Using IAM Roles for EC2 Credentials</h1>
+
+
+<p>If you&#8217;re going to run Ansible inside a VPC, you can take advantage of
+Amazon&#8217;s Identity and Access Management (IAM) roles so that you do not even need
+to set environment variables to pass your EC2 credentials to the instance.<a data-type="indexterm" id="ix_AECIAM" data-primary="Amazon EC2" data-secondary="using IAM roles for EC2 credentials"/><a data-type="indexterm" id="ix_IAMrole" data-primary="Identity and Access Management (IAM) service" data-secondary="using IAM roles for EC2 credentials"/> Amazon&#8217;s IAM roles let you define users and groups and
+control what those users and groups are permitted to do with EC2 (e.g., get
+information about your running instances, create instances, create images). You
+can also assign IAM roles to running instances, so you can effectively say,
+"This instance is allowed to start other instances."</p>
+
+<p>When you make requests against EC2 by using a client program that supports IAM roles, and an instance is granted permissions by an IAM role, the client will fetch the credentials from the <a href="http://amzn.to/1Cu0fTl">EC2 instance metadata service</a> and use those to make requests against the EC2 service end point.</p>
+
+<p>You can create an IAM role through the Amazon Web Services (AWS) Management Console, or at the command line by using
+the AWS Command-Line Interface tool (<a href="http://aws.amazon.com/cli/">AWS CLI</a>).</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>AWS Management Console</h1>
+
+<p>Here&#8217;s how to use the AWS Management Console to create an IAM role that has Power User Access, meaning<a data-type="indexterm" data-primary="Identity and Access Management (IAM) service" data-secondary="using IAM roles for EC2 credentials" data-tertiary="creating IAM role with AWS Management Console"/><a data-type="indexterm" id="ix_AWSMC" data-primary="AWS Management Console" data-secondary="using to create IAM role with Power User Access"/>
+that it is permitted to do pretty much anything with AWS except modify IAM
+users and groups:</p>
+<ol>
+<li>
+<p>Log in to the <a href="https://console.aws.amazon.com">AWS Management Console</a>.</p>
+</li>
+<li>
+<p>Search for and then click IAM.</p>
+</li>
+<li>
+<p>Click "Roles at the left.</p>
+</li>
+<li>
+<p>Click the Create New Role button.</p>
+</li>
+<li>
+<p>Give your role a name and then click Next Step. I like to use <code>ansible</code> as the name for the role for my instance that will run Ansible.</p>
+</li>
+<li>
+<p>Under AWS Service Roles, select Amazon EC2.</p>
+</li>
+<li>
+<p>Search for and select PowerUserAccess, and then click Next Step.</p>
+</li>
+<li>
+<p>Click Create Role.</p>
+</li>
+
+</ol>
+
+<p>Once the role is created, if you select it and click Show Policy, you should
+see a JSON document that looks like <a data-type="xref" href="#POLICY_DOCUMENT"/>.</p>
+<div id="POLICY_DOCUMENT" data-type="example">
+<h5>IAM power user policy document</h5>
+
+<pre data-type="programlisting" data-code-language="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "NotAction": ["iam:*", "organizations:*"],
+      "Resource": "*"
+    },{
+      "Effect": "Allow",
+      "Action": "organizations:DescribeOrganization",
+      "Resource": "*"
+    }
+  ]
+}</pre></div>
+
+<p>When you create a role through the web interface, AWS also automatically creates
+an <em>instance profile</em> with the <a data-type="indexterm" data-primary="instance profiles" data-secondary="creating with AWS Management Console"/>same name as the role (e.g., <code>ansible</code>), and
+associates the role with the instance profile name. When you create an instance
+with the <code>ec2</code> module, if you pass the instance profile name as the
+<code>instance_profile_name</code> parameter, then the created instance will have the
+permissions of that role.<a data-type="indexterm" data-primary="AWS Management Console" data-secondary="using to create IAM role with Power User Access" data-startref="ix_AWSMC"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Command-Line</h1>
+
+<p>You can also create the role and the instance profile by using the AWS CLI tool, but
+it&#8217;s a bit more work.<a data-type="indexterm" id="ix_AWSCLI" data-primary="AWS Command-Line Interface" data-secondary="using to create IAM role and instance profile"/><a data-type="indexterm" id="ix_CLIAWS" data-primary="command-line interface (CLI)" data-secondary="using AWS CLI to create IAM role"/><a data-type="indexterm" id="ix_IAMroleCLI" data-primary="Identity and Access Management (IAM) service" data-secondary="using IAM roles for EC2 credentials" data-tertiary="creating IAM role with AWS CLI"/> You need to do the following:</p>
+<ol>
+<li>
+<p>Create a role, specifying the trust policy. The trust policy describes the entities that can assume the role and the access conditions for the role.</p>
+</li>
+<li>
+<p>Create a policy that describes what the role is permitted to do. In our case, we want to create the equivalent of the power user, where the
+role can perform any AWS-related action except manipulate IAM roles and
+groups.</p>
+</li>
+<li>
+<p>Create an instance profile.</p>
+</li>
+<li>
+<p>Associate the role with the instance profile.</p>
+</li>
+
+</ol>
+
+<p>You&#8217;ll need to create two IAM policy files first, which are in JSON format. The
+trust policy is shown in <a data-type="xref" href="#TRUST_POLICY"/>. This is the same trust policy that AWS
+automatically generates when you create the role via the web interface.</p>
+
+<p>The role policy that describes what the role is allowed to do is shown in
+<a data-type="xref" href="#POWER_USER_POLICY"/>.</p>
+<div id="TRUST_POLICY" data-type="example">
+<h5>trust-policy.json</h5>
+
+<pre data-type="programlisting" data-code-language="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}</pre></div>
+<div id="POWER_USER_POLICY" data-type="example">
+<h5>power-user.json</h5>
+
+<pre data-type="programlisting" data-code-language="json">{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "NotAction": "iam:*",
+      "Resource": "*"
+    }
+  ]
+}</pre></div>
+
+<p><a data-type="xref" href="#CREATING_INSTANCE_PROFILE"/> shows how to create an instance profile on the command line, after you&#8217;ve created <a data-type="indexterm" data-primary="instance profiles" data-secondary="creating on AWS command line"/>the files shown in Examples <a href="#TRUST_POLICY">B-2</a> and <a href="#POWER_USER_POLICY">B-3</a>.</p>
+<div id="CREATING_INSTANCE_PROFILE" data-type="example">
+<h5>Creating an instance profile at the command line</h5>
+
+<pre data-type="programlisting"># Make sure that trust-policy.json and power-user.json are in the
+# current directory, or change the file:// arguments to include the
+# complete path
+
+$ aws iam create-role --role-name ansible --assume-role-policy-document \
+  file://trust-policy.json
+$ aws iam put-role-policy --role-name ansible --policy-name \
+  PowerUserAccess-ansible-20170214 --policy-document file://power-user.json
+$ aws iam create-instance-profile --instance-profile-name ansible
+$ aws iam add-role-to-instance-profile --instance-profile-name ansible \
+  --role-name ansible</pre></div>
+
+<p>As you can see, it&#8217;s much simpler to do this via the web interface, but if you
+want to automate this, then you can use the command line instead. Check out the
+<a href="http://docs.aws.amazon.com/IAM/latest/UserGuide">AWS Identity and Access Management User Guide</a> for more details on IAM.</p>
+
+<p>Once you&#8217;ve created the instance profile, you can then launch an EC2 instance
+with that instance profile. You can do this with the <code>ec2</code> module by using the <code>instance_profile_name</code> parameter:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: launch an instance with iam role
+  ec2:
+    instance_profile_name: ansible
+    # Other parameters not shown</pre>
+
+<p>If you SSH into this instance, you can query the EC2 metadata service to confirm that
+this instance is associated with the Ansible profile. The output should look
+something like this:</p>
+
+<pre data-type="programlisting">$ curl http://169.254.169.254/latest/meta-data/iam/info
+{
+  "Code" : "Success",
+  "LastUpdated" : "2014-11-17T02:44:03Z",
+  "InstanceProfileArn" : "arn:aws:iam::549704298184:instance-profile/ansible",
+  "InstanceProfileId" : "AIPAINM7F44YGDNIBHPYC"
+}</pre>
+
+<p>You can also directly inspect the credentials, although it&#8217;s not
+something you need to do. The Boto library will
+automatically retrieve these credentials when the Ansible <code>ec2</code> modules or dynamic
+inventory script executes:</p>
+
+<pre data-type="programlisting">$ curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ansible
+{
+  "Code" : "Success",
+  "LastUpdated" : "2015-02-09T21:45:20Z",
+  "Type" : "AWS-HMAC",
+  "AccessKeyId" : "ASIAIYXCUETJPY42AC2Q",
+  "SecretAccessKey" : "ORp9gldiymIKH9+rFtWEx8BjGRteNTQSRnLnlmWq",
+  "Token" : "AQoDYXdzEGca4AMPC5W69pvtENpXjw79oH9...",
+  "Expiration" : "2015-02-10T04:10:36Z"
+}</pre>
+
+<p>These credentials are temporary, and Amazon will rotate them automatically for
+you.</p>
+
+<p>You can now use this instance as your control machine, without needing to specify
+your credentials via environment variables. The Ansible <code>ec2</code> modules will
+automatically retrieve the credentials from the metadata service.<a data-type="indexterm" data-primary="AWS Command-Line Interface" data-secondary="using to create IAM role and instance profile" data-startref="ix_AWSCLI"/><a data-type="indexterm" data-primary="Identity and Access Management (IAM) service" data-secondary="using IAM roles for EC2 credentials" data-tertiary="creating IAM role with AWS CLI" data-startref="ix_IAMroleCLI"/><a data-type="indexterm" data-primary="command-line interface (CLI)" data-secondary="using AWS CLI to create IAM role" data-startref="ix_CLIAWS"/><a data-type="indexterm" data-primary="Amazon EC2" data-secondary="using IAM roles for EC2 credentials" data-startref="ix_AECIAM"/><a data-type="indexterm" data-primary="Identity and Access Management (IAM) service" data-secondary="using IAM roles for EC2 credentials" data-startref="ix_IAMrole"/></p>
+</section>
+
+
+
+
+
+
+
+</section>

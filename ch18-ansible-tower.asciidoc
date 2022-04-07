@@ -1,0 +1,411 @@
+[[Ansible_Tower]]
+== Ansible Tower: Ansible for the Enterprise
+
+_Ansible Tower_ is a commercial software product originally created by Ansible, Inc. and now offered by Red Hat.((("Ansible Tower", id="ix_AnsTow"))) Ansible Tower is implemented as a classical on-premises web service on top of Ansible. It provides a more granular user- and role-based access policy management combined with a web user interface, shown in <<ansible_tower_dashboard_a>>, and a RESTful API.
+
+[[ansible_tower_dashboard_a]]
+.Ansible Tower dashboard
+image::images/aur2_1901.png["Ansible Tower dashboard"]
+
+=== Subscription Models
+
+Red Hat offers support as an annual subscription model with three subscription types,((("subscription models for Ansible Tower")))((("Ansible Tower", "subscription models"))) each with different https://access.redhat.com/support/offerings/production/sla[service-level agreements (SLAs)]:
+
+* Self-Support (no support and SLA)
+* Standard (support and SLA: 8	&#xd7; 5)
+* Premium  (support and SLA: 24	&#xd7; 7)
+
+All subscription levels include regular updates and releases of Ansible Tower. The Self-Support subscription model is limited to a maximum of 250 managed hosts and does not include the following features:
+
+* Custom rebranding for login
+* SAML, RADIUS, and LDAP authentication
+* Multiorganization support
+* Activity streams and system tracking
+
+[NOTE]
+====
+After Red Hat acquired Ansible, Inc. in 2015, Red Hat committed to working on an open source version of Ansible Tower. At the time of writing, no further details and no specific timeline have been announced.
+====
+
+==== Try Ansible Tower
+
+Red Hat provides a http://ansible.com/license[free trial license] with the feature set of the Self-Support subscription model for up to 10 managed hosts without expiration.((("Ansible Tower", "subscription models", "trying Ansible Tower")))
+
+For a quick evaluation setup using ((("Vagrant", "Ansible Tower evaluation setup")))Vagrant:
+
+----
+$ vagrant init ansible/tower
+$ vagrant up --provider virtualbox
+$ vagrant ssh
+----
+
+After we log in via SSH, we see a welcome screen similar to <<tower_welcome_screen>>, where we can find the URL of the web interface, username, and password.
+
+[role="pagebreak-before"]
+[[tower_welcome_screen]]
+.Welcome screen
+====
+----
+  Welcome to Ansible Tower!
+
+  Log into the web interface here:
+
+    https://10.42.0.42/
+
+    Username: admin
+    Password: JSKYmEBJATFn
+
+  The documentation for Ansible Tower is available here:
+
+    http://www.ansible.com/tower/
+
+  For help, visit  http://support.ansible.com/
+----
+====
+
+After login on the web interface, we are prompted for the license file, which we obtain by filling out a form and retrieving the license file by email.
+
+
+[NOTE]
+====
+If the Vagrant machine is not reachable at _10.42.0.42_, you may need to run the following command inside the Vagrant machine to bring up the network interface associated with that IP address:
+
+----
+$ sudo systemctl restart network.service
+----
+====
+
+
+=== What Ansible Tower Solves
+
+Ansible Tower is not just a web user interface on top of Ansible. Ansible Tower extends Ansible's functionality in certain ways. Let's take a closer look in this section.((("Ansible Tower", "access control")))
+
+==== Access Control
+
+In large organizations with many teams, Ansible Tower helps manage automation by organizing teams and employees into roles and giving each of them as much control of the managed hosts and devices as they need to fulfill their daily jobs.((("access control with Ansible Tower")))
+
+Ansible Tower acts as a gatekeeper to hosts. When using Ansible Tower, no team or employee is required to have direct access to the managed hosts. This reduces complexity and increases security. <<ansible_tower_dashboard_b>> shows Ansible Tower's web interface for user access.
+
+Connecting Ansible Tower with existing authentication systems such as LDAP directories can reduce administrative cost per user.((("authentication", "management by Ansible Tower")))
+
+[[ansible_tower_dashboard_b]]
+.Web interface for user access
+image::images/aur2_1902.png["Web interface for user access"]
+
+==== Projects
+
+A _project_ in Ansible Tower terminology is nothing more than a bucket containing logically related playbooks and roles.((("playbooks", "in Ansible Tower projects")))((("roles", "in Ansible Tower projects")))((("Ansible Tower", "projects")))((("projects", "in Ansible Tower")))
+
+In classic Ansible projects, we often see that static inventories are kept along with the playbooks and roles. Ansible Tower handles inventories separately. Anything related to inventories and inventory variables kept in projects, such as group variables and host variables, will not be accessible later on.
+
+
+[NOTE]
+====
+The target (e.g., `hosts: <target>`) in these playbooks is essential. Choose wisely by using a common name across playbooks. This allows you to use the playbooks with different inventories. We will discuss this further later in the chapter.
+====
+
+
+As it is a best practice, we keep our projects containing our playbooks in revision control on a source code management (SCM) system. The project management in Ansible Tower can be configured to download these projects from our SCM servers and supports major open source SCM systems such as Git, Mercurial, and pass:[<span class="keep-together">Subversion</span>].
+
+As a fallback, even a static path can be set, where the project is stored locally on the Ansible Tower server, in case we do not want to use an SCM.
+
+As most of our projects evolve over time, the projects on Ansible Tower server must be updated to be in sync with the SCM. But, no worries—Ansible Tower has multiple solutions for keeping projects up-to-date.
+
+We can ensure that Ansible Tower has the latest state of our project by enabling "Update on Launch," as shown in <<ansible_tower_project_scm_update_options>> on the project. Additionally, you can set a scheduled update job on each project to regularly update the project. Finally, you can manually update projects if you wish to maintain control of when updates pass:[<span class="keep-together">happen</span>].
+
+[[ansible_tower_project_scm_update_options]]
+.Ansible Tower project SCM update options
+image::images/aur2_1903.png["Ansible Tower project SCM update options"]
+
+
+==== Inventory Management
+
+Ansible Tower allows you to manage inventories as dedicated resources. This also includes managing the access control for these inventories.((("inventory", "inventory management with Ansible Tower")))((("Ansible Tower", "inventory management")))((("hosts", "Ansible Tower inventory management"))) A common pattern is to put the production, staging, and testing hosts into separate inventories.
+
+Within these inventories, we will be able to add default variables and manually add groups and hosts. In addition, as shown in <<ansible_tower_inventory_source>>, Ansible Tower allows you to query hosts dynamically from a source (e.g., from a VMware vCenter), and put these hosts in a group.
+
+[[ansible_tower_inventory_source]]
+.Ansible Tower inventory source
+image::images/aur2_1904.png["Ansible Tower inventory source"]
+
+
+Group and host variables can be added in form fields that will overwrite defaults.
+
+Hosts can even be temporarily disabled by clicking a button as in <<ansible_tower_inventory_excluded_hosts>>, so they will be excluded from any job run.((("hosts", "Ansible Tower inventory excluded hosts")))
+
+[[ansible_tower_inventory_excluded_hosts]]
+.Ansible Tower inventory excluded hosts
+image::images/aur2_1905.png["Ansible Tower inventory excluded hosts"]
+
+[role="pagebreak-before"]
+==== Run Jobs by Job Templates
+
+Job templates, as shown in <<ansible_tower_job_templates>>, connect projects with inventories.((("Ansible Tower", "running jobs by job templates", id="ix_AnsTowjob")))((("templates", "job templates in Ansible Tower", id="ix_templjob")))((("job templates in Ansible Tower", id="ix_jobtempl"))) They define how users are allowed to execute a playbook from a project to specific targets from a selected inventory.
+
+[[ansible_tower_job_templates]]
+.Ansible Tower job templates
+image::images/aur2_1906.png["Ansible Tower job templates"]
+
+Refinements on a playbook level, such as additional parameters and tags, can be applied. Further, you can specify in what _mode_ the playbook will run (e.g., some users may be allowed to execute a playbook only in _check mode_, while others may be allowed to run the playbook only on a subset of hosts but in _live mode_).
+
+On the target level, an inventory can be selected and optionally limited to some hosts or a group.
+
+An executed job template creates a new so-called job entry, as shown in <<ansible_tower_jobs>>.
+
+[[ansible_tower_jobs]]
+.Ansible Tower job entries
+image::images/aur2_1907.png["Ansible Tower job entries"]
+
+
+In the detail view of each job entry, shown in <<ansible_tower_jobs_detail>>, we find information not only about whether the job was successful but also at what date and time the job has been executed, when it finished, and who started it with which parameters.
+
+We can even filter by play to see all the tasks and their results. All of this information is stored and kept in the database, which allows you to audit this information at any time.
+
+[[ansible_tower_jobs_detail]]
+.Ansible Tower job detail view
+image::images/aur2_1908.png["Ansible Tower job detail view"]
+
+
+=== RESTful API
+
+The Ansible Tower server exposes a Representational State Transfer (REST) API that lets us integrate with existing build and deploy pipelines or continuous deployment systems.((("job templates in Ansible Tower", startref="ix_jobtempl")))((("templates", "job templates in Ansible Tower", startref="ix_templjob")))((("Ansible Tower", "running jobs by job templates", startref="ix_AnsTowjob")))((("REST API", "Ansible Tower")))((("Ansible Tower", "REST API")))
+
+As the API is browsable, we can inspect the whole API in our favorite browser by opening the URL pass:[<em>http://&lt;tower_server&gt;/api</em>]:
+
+----
+$ firefox https://10.42.0.42/api
+----
+
+At the time of writing, the latest API version is `v1`. By clicking the appropriate link or just extend the URL to pass:[<em>http://&lt;tower_server&gt;/api/v1</em>], we get all the available resources as in <<ansible_tower_api_v1>>.
+
+[[ansible_tower_api_v1]]
+.Ansible Tower API version 1
+image::images/aur2_1909.png["Ansible Tower API version 1"]
+
+
+The latest API documentation can be found http://docs.ansible.com/ansible-tower/[online].
+
+=== Ansible Tower CLI
+
+So, how do we create a new user in Ansible Tower or launch a job by using nothing but the API? Of course, we could use the all-time favorite command-line (CLI) HTTP tool `cURL`, but Ansible has made an even more user-friendly CLI tool for us: `tower-cli`.((("tower-cli", id="ix_towCLI")))((("Ansible Tower", "command-line interface, tower-cli", id="ix_AnsTowCLI")))((("command-line interface (CLI)", "Ansible Tower", id="ix_CLIAT")))
+
+[NOTE]
+====
+Unlike the Ansible Tower application, Ansible Tower CLI is open source software published on https://github.com/ansible/tower-cli/[GitHub] under the Apache 2.0 license.
+====
+
+==== Installation
+
+To install `tower-cli`, we use the Python package manager pip.((("tower-cli", "installation")))((("Ansible Tower", "command-line interface, tower-cli", "installation")))
+
+The `tower-cli` can be installed systemwide with the appropriate root permissions or, as we do, just for our local Linux user:
+
+----
+$ pip install ansible-tower-cli
+----
+
+
+If we choose to install on the user level, it will be installed into the path _~/.local/bin/_. Please make sure `~/.local/bin` is in our `PATH`.
+
+----
+$ echo 'export PATH=$PATH:$HOME/.local/bin' >> $HOME/.profile
+$ source $HOME/.profile
+----
+
+
+Before we can access the API, we have((("credentials", "configuring for tower-cli"))) to configure the credentials:
+
+----
+$ tower-cli config host 10.42.0.42
+$ tower-cli config username admin
+$ tower-cli config password JSKYmEBJATFn
+----
+
+
+Since Ansible Tower uses a self-signed((("TLS/SSL certificates", "Ansible Tower"))) SSL/TLS certificate preconfigured, we just skip the verification:
+
+----
+$ tower-cli config verify_ssl false
+----
+
+
+The default output called `human` provides just enough information. If we like more verbose output as a default, we probably want to change it to the `yaml` format. However, we can always append `--format [human|json|yaml]` to any command to overwrite the default:
+
+----
+$ tower-cli config format yaml
+----
+
+
+To verify, we simply run this:
+
+----
+ $ tower-cli config
+----
+
+
+==== Create a User
+
+Let's create a new user by using the `tower-cli user` command, as((("tower-cli", "creating a user")))((("users", "creating with tower-cli")))((("Ansible Tower", "command-line interface, tower-cli", "creating a user"))) shown in <<tower_cli_user_actions>>. If we type this command without any further action, we will see a help output listing all actions available.
+
+[[tower_cli_user_actions]]
+.Ansible Tower CLI user actions
+====
+----
+ $ tower-cli user
+Usage: tower-cli user [OPTIONS] COMMAND [ARGS]...
+
+  Manage users within Ansible Tower.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  create  Create a user.
+  delete  Remove the given user.
+  get     Return one and exactly one user.
+  list    Return a list of users.
+  modify  Modify an already existing user.
+----
+====
+
+
+As it is a RESTful API, the actions (as in <<tower_cli_user_actions>>) are more or less consistent across the API, with a few exceptions. What differs per resource are the parameters and options for the resource. By running `tower-cli user create --help`, we will be shown all available parameters and options.
+
+To create a user, only a few parameters are required:
+
+----
+$ tower-cli user create \
+--username guy \
+--password 's3cr3t$' \
+--email 'guy@example.com' \
+--first-name Guybrush \
+--last-name Threepwood
+----
+
+
+The `tower-cli` has some logic built in, and in the default configuration, we can run the command multiple times without getting an error message. `tower-cli` queries the resource based on the key fields and will present the user we already created, as in <<tower_cli_user_create_output>>.
+
+[[tower_cli_user_create_output]]
+.tower-cli output after creating or updating a user
+====
+----
+changed: true
+id: 2
+type: user
+url: /api/v1/users/2/
+related:
+  admin_of_organizations: /api/v1/users/2/admin_of_organizations/
+  organizations: /api/v1/users/2/organizations/
+  roles: /api/v1/users/2/roles/
+  access_list: /api/v1/users/2/access_list/
+  teams: /api/v1/users/2/teams/
+  credentials: /api/v1/users/2/credentials/
+  activity_stream: /api/v1/users/2/activity_stream/
+  projects: /api/v1/users/2/projects/
+created: '2017-02-05T11:15:37.275Z'
+username: guy
+first_name: Guybrush
+last_name: Threepwood
+email: guy@example.com
+is_superuser: false
+is_system_auditor: false
+ldap_dn: ''
+external_account: null
+auth: []
+----
+====
+
+
+However, `tower-cli` will not update the record if we change, for example, the email address. To achieve an update, we have two possibilities: appending `--force-on-exists` or explicitly using the action `modify` instead of `create`.
+
+==== Launch a Job
+
+One of the things we probably want to automate is running a job from a job template after a successful build on a continuous integration server.((("Ansible Tower", "command-line interface, tower-cli", "launching a job")))((("tower-cli", "launching a job")))
+
+The `tower-cli` makes this pretty straightforward. All we need to know is the name or ID of the job template we want to launch.((("job templates in Ansible Tower", "launching a job with tower-cli"))) Let's use the +list+ action to list all available job templates:
+
+----
+ $ tower-cli job_template list --format human
+== ================= ========= ======= ===============
+id       name        inventory project    playbook
+== ================= ========= ======= ===============
+ 5 Demo Job Template         1       4 hello_world.yml
+ 7 Deploy App ..             1       5 app.yml
+== ================= ========= ======= ===============
+----
+
+
+We have only two job templates available, and our choice is pretty easy. In a larger production-like setup, we probably see a larger set of job templates, and it would be much harder to find the wanted template. `tower_cli` has a few options to filter the output (e.g., by project, `--project <id>`; or by inventory, `--inventory`).
+
+A more advanced way to filter a large set of job templates (e.g., "give me all job templates having this case-insensitive keyword in the name") would be to use the pass:[<span class="keep-together"><code>--query</code></span>] option.
+
+A `--query` with the two arguments `name__icontains` and `deploy` would result in the following API URL:
+
+----
+https://10.42.0.42/api/v1/job_templates/?name__icontains=deploy
+----
+
+
+[NOTE]
+====
+All available filters can be found in the http://docs.ansible.com/ansible-tower/latest/html/towerapi/filtering.html[API documentation].
+====
+
+
+Running the list action with the wanted filter yields the expected result:
+
+----
+ $ tower-cli job_template list --query name__icontains deploy --format human
+== ============= ========= ======= ===============
+id     name      inventory project    playbook
+== ============= ========= ======= ===============
+ 7 Deploy App xy         1       4 hello_world.yml
+== ============= ========= ======= ===============
+----
+
+
+Since we found the job template, we run it as in <<tower_cli_launch_job>>, with the action `job launch` and the argument `--job-template`, and the name or ID of the job template we selected.
+
+[role="pagebreak-before"]
+[[tower_cli_launch_job]]
+.Launch job with tower-cli
+====
+----
+ $ tower-cli job launch --job-template 'Deploy App xy' --format human
+Resource changed.
+== ============ ======================== ======= =======
+id job_template         created          status  elapsed
+== ============ ======================== ======= =======
+11            7 2017-02-05T14:08:05.022Z pending
+== ============ ======================== ======= =======
+----
+====
+
+
+To monitor the job while it's running, the `tower-cli job` provides an action `monitor` with the job ID as argument. This command will run and wait until the job has finished.
+
+----
+tower-cli job monitor 11 --format human
+Resource changed.
+== ============ ======================== ========== =======
+id job_template         created            status   elapsed
+== ============ ======================== ========== =======
+11            5 2017-02-05T13:57:30.504Z successful   6.486
+== ============ ======================== ========== =======
+----
+
+
+Using a bit of command-line magic and https://stedolan.github.io/jq/[`jq`], we can even combine the launching and the monitoring in one line:
+
+----
+tower-cli job monitor $(tower-cli job launch --job-template 5 --format json | jq '.id')
+----
+
+
+=== Onward
+
+As this chapter ends, so does our journey together. And yet, your journey with
+Ansible is just beginning.((("tower-cli", startref="ix_towCLI")))((("Ansible Tower", "command-line interface, tower-cli", startref="ix_AnsTowCLI")))((("command-line interface (CLI)", "Ansible Tower", startref="ix_CLIAT")))((("Ansible Tower", startref="ix_AnsTow"))) We hope that you’ll come to enjoy working with it as
+much as we do, and that the next time you encounter colleagues in clear
+need of an automation tool, you’ll show them how Ansible can make their lives
+easier.

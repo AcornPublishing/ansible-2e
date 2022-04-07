@@ -1,0 +1,519 @@
+[[CALLBACK_PLUGINS]]
+== Callback Plugins
+
+Ansible supports a feature called _callback plugins_ that can perform custom
+actions in response to Ansible events such as a play starting or a task
+completing on a host.((("callback plugins", id="ix_callpl"))) You can use a callback plugin to do things such as send a
+Slack message or write an entry to a remote logging server. In fact, the output you see in your terminal when you execute an Ansible
+playbook is implemented as a callback plugin.((("stdout plugins", id="ix_stdopl")))
+
+Ansible supports two kinds of callback plugins:
+
+* _Stdout plugins_ affect the output displayed to the terminal
+* _Other plugins_ do things other than change displayed output.
+
+
+[NOTE]
+====
+Technically, there are three types of ((("notifications, plugins for")))((("aggregate plugins")))callback plugins, not two:
+
+- Stdout
+- Notification
+- Aggregate
+
+However, since Ansible's implementation makes no distinction between notification and aggregate plugins,
+we combine notification and aggregate plugins into a single category called _other_ plugins.
+====
+
+=== Stdout Plugins
+
+A _stdout_ plugin controls the format of the output displayed to the terminal.
+Only a single stdout plugin can be active at a time.((("callback plugins", "stdout", id="ix_callplstdo")))
+
+You specify a stdout callback by setting the +stdout_callback+ parameter in the +defaults+ section of _ansible.cfg_.((("stdout_plugin parameter"))) For example, to
+select the +actionable+ plugin:
+
+----
+[defaults]
+stdout_callback = actionable
+----
+
+Ansible supports the stdout((("stdout plugins", "supported by Ansible"))) plugins in <<stdout_plugins>>.
+
+[[stdout_plugins]]
+.Stdout plugins
+[options="header"]
+|====================================================
+|Name      |Description
+|actionable|Show only changed or failed
+|debug     |Human-readable stderr and stdout
+|default   |Show default output
+|dense     |Overwrite output instead of scrolling
+|json      |JSON output
+|minimal   |Show task results with minimal formatting
+|oneline   |Like minimal, but on a single line
+|selective |Show only output for tagged tasks
+|skippy    |Suppress output for skipped hosts
+|====================================================
+
+==== actionable
+
+The `actionable` plugin shows output when ((("actionable plugin")))((("stdout plugins", "actionable")))a task runs against a host only if the
+task changes the state of the host or fails. This makes the output less noisy.
+
+==== debug
+
+The `debug` plugin makes it easier to read stdout and stderr returned by tasks,
+which can be helpful for debugging.((("debug plugin")))((("stdout plugins", "debug")))((("default plugin"))) The default plugin can make it difficult to
+read the pass:[<span class="keep-together">output</span>]:
+
+----
+TASK [check out the repository on the host] *************************************
+fatal: [web]: FAILED! => {"changed": false, "cmd": "/usr/bin/git clone --origin o
+rigin '' /home/vagrant/mezzanine/mezzanine_example", "failed": true, "msg": "Clon
+ing into '/home/vagrant/mezzanine/mezzanine_example'...\nPermission denied (publi
+ckey).\r\nfatal: Could not read from remote repository.\n\nPlease make sure you h
+ave the correct access rights\nand the repository exists.", "rc": 128, "stderr":
+"Cloning into '/home/vagrant/mezzanine/mezzanine_example'...\nPermission denied (
+publickey).\r\nfatal: Could not read from remote repository.\n\nPlease make sure
+you have the correct access rights\nand the repository exists.\n", "stderr_lines"
+: ["Cloning into '/home/vagrant/mezzanine/mezzanine_example'...", "Permission den
+ied (publickey).", "fatal: Could not read from remote repository.", "", "Please m
+ake sure you have the correct access rights", "and the repository exists."], "std
+out": "", "stdout_lines": []}
+----
+
+With the +debug+ plugin, the formatting is much easier to read:
+
+----
+TASK [check out the repository on the host] *************************************
+fatal: [web]: FAILED! => {
+    "changed": false,
+    "cmd": "/usr/bin/git clone --origin origin '' /home/vagrant/mezzanine/mezzani
+    ne_example",
+    "failed": true,
+    "rc": 128
+}
+
+STDERR:
+
+Cloning into '/home/vagrant/mezzanine/mezzanine_example'...
+Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+
+
+
+MSG:
+
+Cloning into '/home/vagrant/mezzanine/mezzanine_example'...
+Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+----
+
+==== dense
+
+The `dense` plugin (new in Ansible 2.3) always shows only two lines of output.((("dense plugin")))((("stdout plugins", "dense"))) It overwrites the
+existing lines rather than scrolling:
+
+----
+PLAY 1: CONFIGURE WEBSERVER WITH NGINX
+task 6: testserver
+----
+
+==== json
+
+The `json` plugin generates machine-readable JSON as output.((("json plugin")))((("stdout plugins", "json"))) This is useful if
+you want to process the Ansible output by using a script. Note that this callback
+will not generate output until the entire playbook has finished executing.
+
+The JSON output is too verbose to show here, but here is a partial example:
+
+----
+{
+ "plays": [
+  "play": {
+    "id": "a45e60df-95f9-5a33-6619-000000000002"
+    "name": "Configure webserver with nginx",
+  },
+  "tasks": [
+   {
+    "task": {
+     "name": "install nginx",
+     "id": "a45e60df-95f9-5a33-6619-000000000004"
+    }
+    "hosts": {
+     "testserver": {
+      "changed": false,
+      "invocation": {
+       "module_args": { ... }
+     }
+    }
+   }
+  ]
+ ]
+}
+----
+
+==== minimal
+
+The `minimal` plugin does very little processing of the result returned from
+Ansible from an event.((("minimal plugin")))((("stdout plugins", "minimal"))) For example,((("default plugin", "task formatting"))) whereas the default plugin formats a task
+like this:
+
+----
+TASK [create a logs directory] **********************************************
+ok: [web]
+----
+
+the +minimal+ plugin outputs this:
+
+----
+web | SUCCESS => {
+    "changed": false,
+    "gid": 1000,
+    "group": "vagrant",
+    "mode": "0775",
+    "owner": "vagrant",
+    "path": "/home/vagrant/logs",
+    "size": 4096,
+    "state": "directory",
+    "uid": 1000
+}
+----
+
+==== oneline
+
+The `oneline` plugin is similar to minimal, but prints ((("oneline plugin")))((("stdout plugins", "oneline")))output on a single line (shown
+here on multiple lines because the text doesn't fit on one line in the book):
+
+----
+web | SUCCESS => {"changed": false, "gid": 1000, "group": "vagrant", "mode":
+"0775", "owner": "vagrant", "path": "/home/vagrant/logs", "size": 4096, "state":
+"directory", "uid": 1000}
+----
+
+==== selective
+
+
+The `selective` plugin shows output only for successful tasks that have the +print_action+
+tag.((("print_action")))((("selective plugin")))((("stdout plugins", "selective"))) It always shows output for failed tasks.
+
+==== skippy
+
+The `skippy` plugin does not show any output for hosts that are skipped.((("skippy plugin")))((("stdout plugins", "skippy"))) Whereas
+the +default+ plugin shows +skipping: [hostname]+ when a host is skipped for
+a task, the +skippy+ plugin suppresses that output.((("default plugin", "skipping hosts")))((("callback plugins", "stdout", startref="ix_callplstdo")))((("stdout plugins", startref="ix_stdopl")))
+
+=== Other Plugins
+
+The other plugins perform a variety of actions, ((("callback plugins", "other", id="ix_callploth")))such as recording execution time
+or sending a Slack notification. <<other_plugins>> lists these other plugins.
+
+Unlike with stdout plugins, you can have multiple other plugins enabled
+at the same time. ((("callback_whitelist setting")))Enable the other plugins you want in _ansible.cfg_ by setting +callback_whitelist+
+to a comma-separated list; for example:
+
+----
+[defaults]
+callback_whitelist = mail, slack
+----
+
+Many of these plugins have configuration options, ((("configuration", "options for callback plugins")))((("environment variables", "configuration options for callback plugins")))which are set via environment
+variables.
+
+
+[[other_plugins]]
+.Other plugins
+[options="header"]
+|========================================
+|Name          |Description
+|foreman       |Send notifications to Foreman
+|hipchat       |Send notifications to HipChat
+|jabber        |Send notifications to Jabber
+|junit         |Write JUnit-formatted XML file
+|log_plays     |Log playbook results per hosts
+|logentries    |Send notifications to Logentries
+|logstash      |Send results to Logstash
+|mail          |Send email when tasks fail
+|osx_say       |Speak notifications on macOS
+|profile_tasks |Report execution time for each task
+|slack         |Send notifications to Slack
+|timer         |Report total execution time
+|========================================
+
+==== foreman
+
+The `foreman` plugin sends notifications to http://theforeman.org[Foreman]. <<foreman_env_vars>> lists the environment variables used to configure this plugin.((("foreman plugin")))((("callback plugins", "other", "foreman")))
+
+[[foreman_env_vars]]
+.foreman plugin environment variables
+[options="header"]
+|===============================================================================================================
+|Environment var    |Description                   |Default
+|FOREMAN_URL        |URL to the Foreman server     |pass:[<code>http://localhost:3000</code>]
+|FOREMAN_SSL_CERT   |X509 certificate to authenticate to Foreman if HTTPS is used|+/etc/foreman/client_cert.pem+
+|FOREMAN_SSL_KEY    |The corresponding private key |+/etc/foreman/client_key.pem+
+|FOREMAN_SSL_VERIFY |Whether to verify the Foreman certificate. It can be set to 1 to verify SSL certificates using the installed CAs or to a path pointing to a CA bundle. Set to 0 to disable certificate checking.|+1+
+|===============================================================================================================
+
+==== hipchat
+
+The `hipchat` plugin sends notifications((("hipchat plugin")))((("callback plugins", "other", "hipchat"))) to http://hipchat.com[HipChat]. <<hipchat_env_vars>> lists the plugin's environment variables used for configuration.
+
+[[hipchat_env_vars]]
+.hipchat plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var    |Description                            |Default
+|HIPCHAT_TOKEN      |HipChat API token                      |(_None_)
+|HIPCHAT_ROOM       |HipChat room to post in                |+ansible+
+|HIPCHAT_NAME       |HipChat name to post as                |+ansible+
+|HIPCHAT_NOTIFY     |Add notify flag to important messages  |+true+
+|=====================================================================
+
+[NOTE]
+====
+You must install the((("Python", "prettytable library")))((("prettytable library"))) Python prettytable library to use the `hipchat` plugin:
+
+----
+pip install prettytable
+----
+====
+
+==== jabber
+
+The `jabber` plugin sends notifications to http://jabber.org[Jabber].((("jabber plugin")))((("callback plugins", "other", "jabber"))) Note that there are no default values for any of the configuration options for
+the +jabber+ plugin. These options are listed in <<jabber_env_vars>>.
+
+[[jabber_env_vars]] 
+.jabber plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var    |Description
+|JABBER_SERV        |Hostname of Jabber server
+|JABBER_USER        |Jabber username for auth
+|JABBER_PASS        |Jabber password auth
+|JABBER_TO          |Jabber user to send the notification to
+|=====================================================================
+
+[NOTE]
+====
+You must install the Python xmpp library((("xmpp library")))((("Python", "xmpp library"))) to use the `jabber` plugin:
+
+----
+pip install git+https://github.com/ArchipelProject/xmpppy
+----
+====
+
+==== junit
+
+The `junit` plugin writes the results of a playbook execution to an XML file in
+JUnit format.((("XML files, produced by junit plugin")))((("junit plugin")))((("callback plugins", "other", "junit"))) It is configured by using the environment variables listed in <<junit_env_vars>>. The plugin uses the conventions in <<junit_report>> for generating the XML report.
+
+[[junit_env_vars]]
+.junit plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var    |Description                               |Default
+|JUNIT_OUTPUT_DIR   |Destination directory for files           |+~/.ansible.log+
+|JUNIT_TASK_CLASS   |Configure output: one class per YAML file |+false+
+|=====================================================================
+
+[[junit_report]]
+.junit report
+[options="header"]
+|=====================================================================
+|Ansible task output                           |JUnit report
+|ok                                            |pass
+|failed with EXPECTED FAILURE in the task name |pass
+|failed due to an exception                    |error
+|failed for other reasons                      |failure
+|skipped                                       |skipped
+|=====================================================================
+
+[NOTE]
+====
+You must install the _junit_xml_ library((("junit_xml library"))) to use the `junit` plugin:
+
+----
+pip install junit_xml
+----
+
+====
+
+[role="pagebreak-before"]
+==== log_plays
+
+
+The `log_plays` plugin logs the results to log files in
+_/var/log/ansible/hosts_, one log file per host.((("log_plays plugin")))((("callback plugins", "other", "log_path"))) The path is not configurable.
+
+[NOTE]
+====
+Instead of using the `log_plays` plugin, you can set the +log_path+ configuration
+option in _ansible.cfg_. For example:
+
+----
+[defaults]
+log_path = /var/log/ansible.log
+----
+
+This approach generates a single logfile for all hosts, whereas the plugin
+generates a separate logfile for each host.
+====
+
+
+==== logentries
+
+The `logentries` plugin sends the results ((("logentries plugin")))((("callback plugins", "other", "logentries")))to http://logentries.com[Logentries]. The plugin's environment variables are listed in <<logentries_env_var>>.
+
+[[logentries_env_var]] 
+.logentries plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var          |Description                     | Default
+|LOGENTRIES_ANSIBLE_TOKEN |Logentries token                | (_None_)
+|LOGENTRIES_API           |Hostname of Logentries endpoint |+data.logentries.com+
+|LOGENTRIES_PORT          |Logentries port                 | +80+
+|LOGENTRIES_TLS_PORT      |Logentries TLS port             | +443+
+|LOGENTRIES_USE_TLS       |Use TLS with Logentries         | +false+
+|LOGENTRIES_FLATTEN       |Flatten results                 |+false+
+|=====================================================================
+
+
+[NOTE]
+====
+You must install the Python _certifi_ and _flctdict_ libraries ((("Python", "certifi and flctdict libraries")))((("flctdict library")))((("certifi library")))to use the
+`logentries` plugin:
+
+----
+pip install certifi flatdict
+----
+====
+
+==== logstash
+
+The `logstash` plugin writes results to https://www.elastic.co/products/logstash[Logstash].((("logstash plugin")))((("callback plugins", "other", "logstash")))  It is configured with the environment variables listed in <<logstash_env_vars>>.
+
+[role="pagebreak-before"]
+[[logstash_env_vars]]
+.logstash plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var    |Description                            |Default
+|LOGSTASH_SERVER    |Logstash server hostname               |+localhost+
+|LOGSTASH_PORT      |Logstash server port                   |+5000+
+|LOGSTASH_TYPE      |Message type                           |+ansible+
+|=====================================================================
+
+[NOTE]
+====
+You must install the Python _python-logstash_ library to use((("python-logstash library"))) the
+`logstash` plugin:
+
+----
+pip install python-logstash
+----
+====
+
+==== mail
+
+The `mail` plugin sends an email whenever a task fails on a host.((("mail plugin")))((("callback plugins", "other", "mail"))) <<mail_env_vars>> lists the environment variables for this plugin.
+
+[[mail_env_vars]]
+.Mail plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var    |Description           |Default
+|SMTPHOST           |SMTP server hostname  |+localhost+
+|=====================================================================
+
+==== osx_say
+
+The `osx_say` plugin uses the +say+ program to speak notifications on macOS. It
+has no configuration options.((("callback plugins", "other", "osx_say")))((("macOS", "spoken notifications, osx_say plugin")))((("osx_say plugin")))
+
+
+==== profile_tasks
+
+The `profile_tasks` plugin generates a summary of the execution time of individual tasks and((("profile_tasks plugin")))((("callback plugins", "other", "profile_tasks")))
+total execution time for the playbook:
+
+----
+Saturday 22 April 2017  20:05:51 -0700 (0:00:01.465)       0:01:02.732 ********
+===============================================================================
+install nginx ---------------------------------------------------------- 57.82s
+Gathering Facts --------------------------------------------------------- 1.90s
+restart nginx ----------------------------------------------------------- 1.47s
+copy nginx config file -------------------------------------------------- 0.69s
+copy index.html --------------------------------------------------------- 0.44s
+enable configuration ---------------------------------------------------- 0.35s
+----
+
+The plugin also outputs execution time info as the tasks are running,
+displaying the following:
+
+[role="pagebreak-before"]
+* Date and time that the task started
+* Execution time of previous task, shown in parentheses
+* Cumulative execution time for this play
+
+
+Here's an example of that output:
+
+----
+TASK [install nginx] *********************************************************
+Saturday 22 April 2017  20:09:31 -0700 (0:00:01.983)       0:00:02.030 ******
+ok: [testserver]
+----
+
+<<profile_tasks_env_vars>> lists the environment variables used for configuration.
+
+[[profile_tasks_env_vars]]
+.profile-tasks plugin environment variables
+[options="header"]
+|============================================================================
+|Environment var                 |Description                        |Default
+|PROFILE_TASKS_SORT_ORDER        |Sort output (+ascending+, +none+)  |+none+
+|PROFILE_TASKS_TASK_OUTPUT_LIMIT |Number of tasks to show, or +all+  |+20+
+|============================================================================
+
+
+==== slack
+
+
+The `slack` plugin sends notifications to http://slack.com[Slack].((("slack plugin")))((("callback plugins", "other", "slack")))  <<slack_env_vars>> lists the environmental variables used for configuration.
+
+[[slack_env_vars]]
+.slack plugin environment variables
+[options="header"]
+|=====================================================================
+|Environment var    |Description                            |Default
+|SLACK_WEBHOOK_URL  |Slack webhook URL                      |(_None_)
+|SLACK_CHANNEL      |Slack room to post in                  |+#ansible+
+|SLACK_USERNAME     |Username to post as                    |+ansible+
+|SLACK_INVOCATION   |Show command-line invocation details   |+false+
+|=====================================================================
+
+[NOTE]
+====
+You must install the Python _prettytable_ library ((("prettytable library")))((("Python", "prettytable library")))to use the `slack` plugin.
+====
+
+==== timer
+
+The `timer` plugin outputs the total execution time of the playbook;((("timer plugin")))((("callback plugins", "other", "timer"))) for
+example:
+
+----
+Playbook run took 0 days, 0 hours, 2 minutes, 16 seconds
+----
+
+You're generally better off using the +profile_tasks+ plugin((("profile_tasks plugin"))) instead, which also
+shows execution time per task.((("callback plugins", "other", startref="ix_callploth")))((("callback plugins", startref="ix_callpl")))

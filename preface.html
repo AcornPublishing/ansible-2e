@@ -1,0 +1,237 @@
+<section data-type="preface">
+<h1>Preface to the First Edition</h1>
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Why I Wrote This Book</h1>
+
+<p>When I was writing my first web application, using Django, the popular Python-based framework, I remember the sense of
+accomplishment when the app was finally working
+on my desktop. I would run <code>django manage.py runserver</code>, point my
+browser to <em>http://localhost:8000</em>, and there was my web application in all its
+glory.</p>
+
+<p>Then I discovered there were all of these&#8230;<em>things</em> I had to do, just to get
+the darned app to run on the Linux server. In addition to installing Django and
+my app onto the server, I had to install Apache and the <code>mod_python</code> module so
+that Apache could run Django apps. Then I had to figure out the right Apache
+configuration file incantation so that it would run my application and serve up
+the static assets properly.</p>
+
+<p>None of it was hard; it was just a pain to get all of those details right. I
+didn&#8217;t want to muck about with configuration files; I just wanted my app to run.
+Once I got it working, everything was fine&#8230;until, several months
+later, I had to do it again, on a different server, at which point I had to
+start the process all over again.</p>
+
+<p>Eventually, I discovered that this process was Doing It Wrong. The right way to do this
+sort of thing has a name, and that name is <em>configuration management</em>. The great
+thing about using configuration management is that it&#8217;s a way to capture
+knowledge that always stays up-to-date. No more hunting for the right doc page
+or searching through your old notes.</p>
+
+<p>Recently, a colleague at work was interested in trying out Ansible for deploying
+a new project, and he asked me for a reference on how to apply the Ansible
+concepts in practice, beyond what was available in the official docs. I didn&#8217;t
+know what else to recommend, so I decided to write something to fill the gap—and here it
+is. Alas, this book comes too late for him, but I hope you&#8217;ll find it useful.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Who Should Read This Book</h1>
+
+<p>This book is for anyone who needs to deal with Linux or Unix-like
+servers. If you&#8217;ve ever used the terms <em>systems administration</em>, <em>operations</em>, <em>deployment</em>, <em>configuration management</em>, or (sigh) <em>DevOps</em>, then you should find some value here.</p>
+
+<p>Although I have managed my share of Linux servers, my background is in
+software engineering. This means that the examples in this book tend
+toward the deployment end of the spectrum, although I&#8217;m in agreement with <a href="#webops">Andrew Clay Shafer</a> that the distinction between deployment and configuration is unresolved.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Navigating This Book</h1>
+
+<p>I&#8217;m not a big fan of book outlines: Chapter 1 covers so and so, Chapter 2 covers such and such, that sort of thing. I strongly suspect that nobody ever reads them (I never do), and the table of contents is much easier to scan.</p>
+
+<p>This book is written to be read start to finish, with later chapters building on the earlier ones. It&#8217;s written largely in a tutorial style, so you should be able to follow along on your own machine. Most of the examples are focused on web applications.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Conventions Used in This Book</h1>
+
+<p>The following typographical conventions are used in this book:</p>
+<dl>
+<dt><em>Italic</em></dt>
+<dd>
+<p>Indicates new terms, URLs, email addresses, filenames, and file extensions.</p>
+</dd>
+<dt><code>Constant width</code></dt>
+<dd>
+<p>Used for program listings, as well as within paragraphs to refer to program elements such as variable or function names, databases, data types, environment variables, statements, and keywords.</p>
+</dd>
+<dt><strong><code>Constant width bold</code></strong></dt>
+<dd>
+<p>Shows commands or other text that should be typed literally by the user.</p>
+</dd>
+<dt><em><code>Constant width italic</code></em></dt>
+<dd>
+<p>Shows text that should be replaced with user-supplied values or by values determined by context.</p>
+</dd>
+</dl>
+<div data-type="note">
+<p>This icon signifies a general note.</p>
+</div>
+<div data-type="tip">
+<p>This icon signifies a tip or suggestion.</p>
+</div>
+<div data-type="warning">
+<p>This icon indicates a warning or caution.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Online Resources</h1>
+
+<p>Code samples from this book are available at this book&#8217;s <a href="http://github.com/ansiblebook/ansiblebook">GitHub page</a>. There is ample official <a href="http://docs.ansible.com">Ansible documentation</a> available for reference.</p>
+
+<p>I maintain a few Ansible quick reference pages on <a href="https://github.com/lorin/ansible-quickref">GitHub</a> as well.</p>
+
+<p>The Ansible code is on <a href="https://github.com/ansible/ansible">GitHub</a>. It was
+previously spread out across three repositories, but as of Ansible
+2.3, all of the code is maintained in a single repository.</p>
+
+<p>Bookmark the <a href="http://bit.ly/1Dt75tg">Ansible module index</a>; you&#8217;ll be referring to it constantly as you use Ansible. <a href="https://galaxy.ansible.com">Ansible Galaxy</a> is a repository of Ansible roles contributed by the community. The <a href="http://bit.ly/1Dt79ZT">Ansible Project Google Group</a> is the place to go if you have any questions about Ansible.</p>
+
+<p>If you&#8217;re interested in contributing to Ansible development, check out the <a href="http://bit.ly/1Dt79ZT">Ansible Development Google Group</a>.</p>
+
+<p>For real-time help with Ansible, there&#8217;s an active <em>#ansible</em> IRC channel on <em>irc.freenode.net</em>.</p>
+
+<p>Supplemental material (code examples, exercises, etc.) is available for download at <a href="https://github.com/ansiblebook/ansiblebook"><em class="hyperlink">https://github.com/ansiblebook/ansiblebook</em></a>.</p>
+
+<p>This book is here to help you get your job done. In general, you may use the example code offered with this book in your programs and documentation. You do not need to contact us for permission unless you’re reproducing a significant portion of the code. For example, writing a program that uses several chunks of code from this book does not require permission. Selling or distributing a CD-ROM of examples from O’Reilly books does require permission. Answering a question by citing this book and quoting example code does not require permission. Incorporating a significant amount of example code from this book into your product’s documentation does require permission.</p>
+
+<p>We appreciate, but do not require, attribution. An attribution usually includes the title, author, publisher, and ISBN. For example: “<em>Ansible: Up and Running</em> by Lorin Hochstein and René Moser (O’Reilly). Copyright 2017 O&#8217;Reilly Media, Inc., 978-1-491-97980-8.”</p>
+
+<p>If you feel your use of code examples falls outside fair use or the permission given above, feel free to contact us at <a class="email" href="mailto:permissions@oreilly.com"><em>permissions@oreilly.com</em></a>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Safari® Books Online</h1>
+<div data-type="note" class="safarienabled">
+<p><a href="http://safaribooksonline.com" class="orm:hideurl:ital"><em class="hyperlink">Safari Books Online</em></a> is an on-demand digital library that delivers expert <a href="https://www.safaribooksonline.com/explore/" class="orm:hideurl">content</a> in both book and video form from the world&#8217;s leading authors in technology and business.</p>
+</div>
+
+<p>Technology professionals, software developers, web designers, and business and creative professionals use Safari Books Online as their primary resource for research, problem solving, learning, and certification training.</p>
+<p>Safari Books Online offers a range of <a href="https://www.safaribooksonline.com/pricing/" class="orm:hideurl">plans and pricing</a> for <a href="https://www.safaribooksonline.com/enterprise/" class="orm:hideurl">enterprise</a>, <a href="https://www.safaribooksonline.com/government/" class="orm:hideurl">government</a>, <a href="https://www.safaribooksonline.com/academic-public-library/" class="orm:hideurl">education</a>, and individuals.</p>
+
+<p>Members have access to thousands of books, training videos, and prepublication manuscripts in one fully searchable database from publishers like O&#8217;Reilly Media, Prentice Hall Professional, Addison-Wesley Professional, Microsoft Press, Sams, Que, Peachpit Press, Focal Press, Cisco Press, John Wiley &amp; Sons, Syngress, Morgan Kaufmann, IBM Redbooks, Packt, Adobe Press, FT Press, Apress, Manning, New Riders, McGraw-Hill, Jones &amp; Bartlett, Course Technology, and hundreds <a href="https://www.safaribooksonline.com/our-library/" class="orm:hideurl">more</a>. For more information about Safari Books Online, please visit us <a class="orm:hideurl">online</a>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>How to Contact Us</h1>
+
+<p>Please address comments and questions concerning this book to the publisher:</p>
+<ul class="simplelist">
+  <li>O’Reilly Media, Inc.</li>
+  <li>1005 Gravenstein Highway North</li>
+  <li>Sebastopol, CA 95472</li>
+  <li>800-998-9938 (in the United States or Canada)</li>
+  <li>707-829-0515 (international or local)</li>
+  <li>707-829-0104 (fax)</li>
+</ul>
+
+<p>To comment or ask technical questions about this book, send email to <a class="email" href="mailto:bookquestions@oreilly.com"><em>bookquestions@oreilly.com</em></a>.</p>
+
+<p>For more information about our books, courses, conferences, and news, see our website at <a href="http://www.oreilly.com"><em class="hyperlink">http://www.oreilly.com</em></a>.</p>
+
+<p>Find us on Facebook: <a href="http://facebook.com/oreilly"><em class="hyperlink">http://facebook.com/oreilly</em></a></p>
+
+<p>Follow us on Twitter: <a href="http://twitter.com/oreillymedia"><em class="hyperlink">http://twitter.com/oreillymedia</em></a></p>
+
+<p>Watch us on YouTube: <a href="http://www.youtube.com/oreillymedia"><em class="hyperlink">http://www.youtube.com/oreillymedia</em></a></p>
+</section>
+
+
+
+
+
+
+
+</section>

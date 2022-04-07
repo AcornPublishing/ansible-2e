@@ -1,0 +1,1534 @@
+[[cloud]]
+== Amazon EC2
+
+Ansible has several features that make working with infrastructure-as-a-service (IaaS) clouds much easier.((("Amazon EC2", id="ix_AEC")))((("cloud", seealso="Amazon EC2"))) This chapter focuses on Amazon Elastic Compute Cloud (EC2) because it's the most popular IaaS cloud and the one I know best. However, many of the concepts should transfer to other clouds supported by Ansible.((("infrastructure-as-a-service (IaaS) clouds", seealso="Amazon EC2")))((("EC2", see="Amazon EC2")))((("Elastic Cloud Compute (EC2)", see="Amazon EC2")))((("Ansible", "support for Amazon EC2")))
+
+Ansible supports EC2 in two ways:
+
+* A dynamic inventory plugin for automatically populating your Ansible inventory instead of manually specifying your servers
+* Modules that perform actions on EC2 such as creating new servers
+
+This chapter covers both the EC2 dynamic inventory plugin and the EC2 modules.
+
+[NOTE]
+====
+As of this writing, Ansible has nearly one hundred modules that relate to EC2 as well
+as other features offered by Amazon Web Services (AWS).((("Amazon Web Services (AWS)", "Ansible support for"))) We have space to
+cover only a few of them here, so we focus on the basics.
+====
+
+[role="pagebreak-before less_space"]
+.What Is an IaaS Cloud?
+****
+You've probably heard so many references to _the cloud_ in the technical press that you're suffering from buzzword overload.footnote:[The National Institute of Standards and Technology (NIST) has a pretty good definition of cloud computing in <<nist,_The NIST Definition of Cloud Computing_>>.] I'll be precise about what I mean by an infrastructure-as-a-service (IaaS) cloud.((("IaaS clouds", see="infrastructure-as-a-service (IaaS) clouds")))((("infrastructure-as-a-service (IaaS) clouds", "about")))
+
+To start, here's a typical user interaction with an IaaS cloud:
+
+User:: I want five new servers, each one with two CPUs, 4 GB of memory, and 100 GB of storage, running Ubuntu 16.04.
+Service:: Request received. Your request number is 432789.
+User:: What's the current status of request 432789?
+Service:: Your servers are ready to go, at IP addresses _203.0.113.5_,
+_203.0.113.13_, _203.0.113.49_, _203.0.113.124_, _203.0.113.209_.
+User:: I'm done with the servers associated with request 432789.
+Service:: Request received. The servers will be terminated.
+
+An IaaS cloud is a service that enables a user to _provision_ (create)
+new servers.((("provisioning servers"))) All IaaS clouds are _self-serve_, meaning that the user
+interacts directly with a software service rather than, say, filing a ticket
+with the IT department. Most IaaS clouds offer three types of
+interfaces to allow users to((("infrastructure-as-a-service (IaaS) clouds", "interfaces for user interaction")))((("web interface (Amazon EC2)")))((("REST API", "Amazon EC2"))) interact with the system:
+
+ * Web interface
+ * Command-line interface
+ * REST API
+
+In the case of EC2, the web interface is called the
+https://console.aws.amazon.com[AWS Management Console], and((("AWS Management Console")))((("AWS Command-Line Interface")))((("command-line interface (CLI)", "AWS Command-Line Interface"))) the command-line
+interface is called (unimaginatively) the http://aws.amazon.com/cli/[AWS
+Command-Line Interface]. The REST API is documented at http://amzn.to/1F7g6yA[Amazon].
+
+
+IaaS clouds typically use virtual
+machines to implement the servers, although you can build an IaaS cloud by using
+bare-metal servers (i.e., users run directly on the pass:[<span class="keep-together">hardware</span>] rather than inside
+a virtual machine) or containers.((("virtual machines", "implementing servers in IaaS clouds"))) For example, SoftLayer and Rackspace have bare-metal offerings, and Amazon EC2, Google Compute Engine, and Azure clouds offer containers.
+
+Most IaaS clouds let you do more than just start up and
+tear down servers. In particular, they typically let you provision storage so you can attach and detach disks to your servers. This type of storage is commonly referred to as _block storage_. ((("storage", "in IaaS cloud services")))((("block storage")))((("networking features (IaaS clouds)")))They also provide networking features, so you can define network topologies that describe how your servers are interconnected, and you can define firewall rules that restrict networking access to your servers.
+
+Amazon EC2 is the most popular public IaaS cloud provider, but there are other IaaS clouds out there.((("cloud", "cloud services other than Amazon EC2"))) In addition to EC2, Ansible ships with
+modules for many other clouds, including Microsoft Azure, Digital Ocean, Google
+Compute Engine, SoftLayer,
+and Rackspace, as well as clouds built using oVirt, OpenStack, CloudStack and VMWare vSphere.((("Azure cloud service")))((("Rackspace")))((("SoftLayer")))((("Google Compute Engine")))((("Microsoft Azure")))((("Digital Ocean")))
+****
+
+=== Terminology
+
+EC2 exposes many concepts. I'll explain these concepts as they come up
+in this chapter,((("Amazon EC2", "terminology"))) but there are three terms I'd like to cover up front.
+
+==== Instance
+
+EC2's documentation uses the term _instance_ to refer to a virtual machine, and I
+use that terminology in this chapter.((("Amazon EC2", "terminology", "instance")))((("instances (Amazon EC2)")))((("hosts", "Amazon EC2 instances"))) Keep in mind that an EC2 instance is
+a _host_ from Ansible's perspective.
+
+http://amzn.to/1Fw5S8l[EC2 documentation] interchangeably uses the terms _creating instances_, _launching instances_, and _running instances_ to describe the process of bringing up a new instance. However, _starting instances_ means something different—starting up
+an instance that had previously been put in the stopped state.
+
+==== Amazon Machine Image
+
+An _Amazon Machine Image_ (_AMI_) is a virtual machine image, which contains a
+filesystem with an installed operating system on it.((("Amazon machine image (AMI)")))((("Amazon EC2", "terminology", "Amazon machine image (AMI)"))) When you create an instance
+on EC2, you choose which operating system you want your instance to run by specifying the
+AMI that EC2 will use to create the instance.
+
+Each AMI has an associated identifier string, called an _AMI ID_, which starts with `ami-` and then contains eight hexadecimal characters; for example, +ami-12345abc+.((("AMI ID")))
+
+
+==== Tags
+
+EC2 lets you annotate your instancesfootnote:[You can add tags to
+entities other than instances, such as AMIs, volumes, and security groups.] with custom metadata that it calls _tags_.((("tags", "Amazon EC2")))((("Amazon EC2", "terminology", "tags"))) Tags are just key-value pairs of strings. For example, we could annotate an instance with the following tags:
+
+----
+Name=Staging database
+env=staging
+type=database
+----
+
+If you've ever given your EC2 instance a name in the AWS Management Console, you've used
+tags without even knowing it. EC2 implements instance names as tags; the
+key is +Name+, and the value is whatever name you gave the instance.((("Name tags (Amazon EC2)")))
+Other than that, there's nothing special about the +Name+ tag, and you can
+configure the management console to show the value of other tags in addition to
+the +Name+ tag.
+
+Tags don't have to be unique, so you can have 100 instances that
+all have the same tag. Because Ansible's EC2 modules often use tags to identify
+resources and implement idempotence, they will come up several times in this chapter.
+
+[TIP]
+====
+It's good practice to add meaningful tags to all of your EC2 resources, since
+they act as a form of documentation.
+====
+
+=== Specifying Credentials
+
+When you make requests against Amazon EC2, you need to specify credentials. If
+you've used the Amazon web console, you've used your username and password to
+log in. ((("credentials", "in Amazon EC2", id="ix_credAEC")))((("Amazon EC2", "specifying credentials", id="ix_AECcred")))However, all the bits of Ansible that interact with EC2 talk to the
+EC2 API. The API does not use a username and password for credentials. Instead, it
+uses two((("access key ID (Amazon EC2)")))((("secret access key (Amazon EC2)"))) strings: an _access key ID_ and a _secret access key_.
+
+These strings typically look like this:
+
+* Sample EC2 access key ID: +AKIAIOSFODNN7EXAMPLE+
+* Sample EC2 secret access key: +wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY+
+
+You can obtain these credentials through the _Identity and Access Management_
+(IAM) service.((("Identity and Access Management (IAM) service"))) Using this service, you can create different IAM users with
+different permissions. Once you have created an IAM user, you can generate the
+access key ID and secret access key for that user.
+
+When you are calling EC2-related modules, you can pass these strings as module
+arguments.((("arguments (module)", "passing EC2 credential strings as"))) For the dynamic inventory plugin, you can specify the credentials in
+the _ec2.ini_ file (discussed in the next section). However, both the EC2
+modules and the dynamic inventory plugin also allow you to specify these
+credentials as environment variables. You can also use something called
+IAM roles if your control machine is itself an Amazon EC2 instance, which is covered in <<IAM>>.
+
+
+==== Environment Variables
+
+Although Ansible does allow you to pass credentials explicitly as
+arguments to modules, it also supports setting EC2((("credentials", "in Amazon EC2", "setting as environment variables")))((("environment variables", "Amazon EC2 credentials"))) credentials as environment variables. <<ec2_env_vars>> shows how to set these environment variables.((("AWS_SECRET_ACCESS_KEY")))((("AWS_ACCESS_KEY_ID")))
+
+[[ec2_env_vars]]
+.Setting EC2 environment variables
+====
+[source,bash]
+----
+# Don't forget to replace these values with your actual credentials!
+export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+----
+====
+
+[NOTE]
+====
+While you can set your default AWS region by environment variable, I recommend that you always explicitly pass the EC2 region as an argument when invoking your modules.((("regions (AWS)"))) All of the examples in this chapter explicitly pass the region as an argument.
+====
+
+I recommend using environment variables for +AWS_ACCESS_KEY_ID+ and +AWS_SECRET_ACCESS_KEY+ because this allows you to use EC2-related modules
+and inventory plugins without putting your credentials in any of your
+Ansible-related files. I put these in a dotfile that runs when my session
+starts.((("Zsh shell", "dotfile containing Amazon EC2 credentials")))((("shells", "dotfile containing Amazon EC2 credentials")))((("Bash shell", "dotfile containing Amazon EC2 credentials"))) I use Zsh, so in my case that file is _&#x7e;/.zshrc_. If you're running Bash,
+you might want to put it in your _&#x7e;/.profile_ file.footnote:[Or maybe it's _~/.bashrc_? I've never figured out the difference between the various Bash dotfiles.] If you're using a shell other than Bash or Zsh, you're probably knowledgeable enough to know which dotfile to
+modify to set these environment variables.
+
+Once you have set these credentials in your environment variables, you can invoke the Ansible EC2 modules
+on your control machine, as well as use the dynamic inventory.
+
+==== Configuration Files
+
+An alternative to using environment variables is to place your EC2 credentials in a configuration file.((("credentials", "in Amazon EC2", "placing in configuration file")))((("configuration files", "Amazon EC2 credentials in"))) As discussed in the next section, Ansible uses the Python Boto library, so it supports Boto's conventions for maintaining credentials in a Boto configuration file. I don't cover the format here; for more information, check out the http://bit.ly/1Fw66MM[Boto config documentation].((("credentials", "in Amazon EC2", startref="ix_credAEC")))((("Amazon EC2", "specifying credentials", startref="ix_AECcred")))
+
+=== Prerequisite: Boto Python Library
+
+All of the Ansible EC2 functionality requires you to install the Python Boto library as a Python system package on the control machine.((("Boto library")))((("Python", "Boto library, installing for Ansible EC2 functionality")))((("Amazon EC2", "Boto Python library as prerequisite for"))) To do
+so, use this command:footnote:[You might need to use +sudo+ or activate a virtualenv to install this package, depending on how you installed Ansible.]
+
+----
+$ pip install boto
+----
+
+If you already have instances running on EC2, you can verify that Boto is installed properly and that your credentials are correct by interacting with the Python command line, as shown in <<boto_credentials>>.
+
+[[boto_credentials]]
+.Testing out Boto and credentials
+====
+----
+$ python
+Python 2.7.12 (default, Nov  6 2016, 20:41:56)
+[GCC 4.2.1 Compatible Apple LLVM 8.0.0 (clang-800.0.42.1)] on darwin
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import boto.ec2
+>>> conn = boto.ec2.connect_to_region("us-east-1")
+>>> statuses = conn.get_all_instance_status()
+>>> statuses
+[]
+----
+====
+
+=== Dynamic Inventory
+
+If your servers live on EC2, you don't want to keep a separate copy of these
+servers in an Ansible inventory file, because that file is going to go stale as
+you spin up new servers and tear down old ones.((("inventory", "dynamic", "using for Amazon EC2 servers", id="ix_invdynAEC")))((("Amazon EC2", "dynamic inventory", id="ix_AECdyninv")))((("dynamic inventory", "for servers on Amazon EC2", id="ix_dyninv2"))) It's much simpler to track your EC2 servers by taking advantage of Ansible's
+support for dynamic inventory to pull information about hosts directly from EC2.
+Ansible ships with a dynamic inventory script for EC2, although I recommend you
+just grab the latest one from the Ansible GitHub repository.footnote:[And, to be
+honest, I have no idea where the package managers install this file.]
+
+You need((("ec2.py inventory script")))((("ec2.ini configuration file"))) two files:
+
+ec2.py:: The actual http://bit.ly/2lAsfV8[inventory script]
+ec2.ini:: The http://bit.ly/2l168KP[configuration file for the inventory script]
+
+
+Previously, we had a _playbooks/hosts_ file, which served as our inventory.
+Now, we're going to use a _playbooks/inventory_ directory.((("playbooks/inventory directory"))) We'll place _ec2.py_
+and _ec2.ini_ into that directory, and set _ec2.py_ as executable.
+<<ex-12-3>> shows one way to do that.((("ec2.py inventory script", "installing")))
+
+[[ex-12-3]]
+.Installing the EC2 dynamic inventory script
+====
+----
+$ cd playbooks/inventory
+$ wget https://raw.githubusercontent.com/ansible/ansible/devel/contrib/inventory\
+/ec2.py
+$ wget https://raw.githubusercontent.com/ansible/ansible/devel/contrib/inventory\
+/ec2.ini
+$ chmod +x ec2.py
+
+----
+====
+
+[CAUTION]
+====
+If you are running Ansible on a Linux distribution that uses Python 3.__x__ as the default Python (e.g., Arch Linux), then _ec2.py_ will not work unmodified because it is a Python 2.__x__ script.((("Python", "ec2.py inventory script, Python versions and")))((("Linux distributions", "using Python 3")))
+
+
+Make sure your system has Python 2.__x__ installed and then modify the first line of _ec2.py_ from this:
+
+----
+#!/usr/bin/env python
+----
+
+to this:
+
+----
+#!/usr/bin/env python2
+----
+
+====
+
+
+If you've set up your environment variables as described in the previous section, you should be able to confirm that the script is working by running the following:
+
+----
+$ ./ec2.py --list
+----
+
+The script should output information about your various EC2 instances.((("ec2.py inventory script", "output from"))) The structure should look something like this:
+[source,json]
+----
+{
+  "_meta": {
+    "hostvars": {
+      "ec2-203-0-113-75.compute-1.amazonaws.com": {
+        "ec2_id": "i-1234567890abcdef0",
+        "ec2_instance_type": "c3.large",
+        ...
+      }
+    }
+  },
+  "ec2": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ],
+  "us-east-1": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ],
+  "us-east-1a": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ],
+  "i-12345678": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+  ],
+  "key_mysshkeyname": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ],
+  "security_group_ssh": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ],
+  "tag_Name_my_cool_server": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ],
+  "type_c3_large": [
+    "ec2-203-0-113-75.compute-1.amazonaws.com",
+    ...
+  ]
+}
+
+----
+
+[WARNING]
+====
+If you have not explicitly enabled both RDS and ElastiCache on your AWS account, the _ec2.py_ script will fail with an error.((("Amazon Web Services (AWS)", "ElastiCache and RDS, enabling on AWS account")))((("ElastiCache, enabling on AWS account")))((("RDS (Relational Database Service), enabling on AWS account"))) To enable RDS and ElastiCache,
+you must log in to the Relational Database Service (RDS) and ElastiCache services via the AWS console, and
+then wait for Amazon to activate these services for you.
+
+If you are not using ((("ec2.ini configuration file", "editing to disable ElistiCache and RDS services")))these services, edit your _ec2.ini_ to prevent the
+inventory script from trying to connect to them:
+
+[source,ini]
+----
+[ec2]
+...
+rds = False
+
+elasticache = False
+----
+
+Those lines are present but commented out by default, so make sure to uncomment
+them!
+====
+
+[[inventory_caching]]
+==== Inventory Caching
+
+When Ansible executes the EC2 dynamic inventory script, the script has to
+make requests against one or more EC2 endpoints to retrieve this information.((("Amazon EC2", "dynamic inventory", "inventory caching")))((("dynamic inventory", "for servers on Amazon EC2", "inventory caching")))((("caching", "inventory")))
+Because this can take time, the script will cache the information the first time
+it is invoked by writing to the following files:
+
+[role="pagebreak-before"]
+* _$HOME/.ansible/tmp/ansible-ec2.cache_
+* _$HOME/.ansible/tmp/ansible-ec2.index_
+
+On subsequent calls, the dynamic inventory script will use the cached information until the
+cache expires.
+
+You can modify the behavior by editing the _cache_max_age_ configuration option
+in the _ec2.ini_ configuration file.((("cache_max_age configuration option")))((("ec2.ini configuration file", "cache_max_age option, modifying"))) It defaults to 300 seconds (5 minutes). If you don't want
+caching at all, you can set it to 0:
+
+[source,ini]
+----
+[ec2]
+...
+cache_max_age = 0
+----
+
+You can ((("ec2.py inventory script", "--refresh-cache flag")))also force the inventory script to refresh the cache by invoking it with the pass:[<span class="keep-together"><code>--refresh-cache</code></span>] flag:
+
+----
+$ ./ec2.py --refresh-cache
+----
+
+[WARNING]
+====
+If you create or destroy instances, the EC2 dynamic inventory script will not
+reflect these changes unless the cache expires, or you manually refresh the cache.
+====
+
+==== Other Configuration Options
+
+The _ec2.ini_ file includes configuration options that control the behavior of the dynamic inventory script.((("ec2.ini configuration file", "other configuration options"))) Because the file itself is well-documented with comments, I won't cover those options in detail here.
+
+==== Autogenerated Groups
+
+The EC2 dynamic inventory script will ((("dynamic inventory", "for servers on Amazon EC2", "autogenerated groups")))((("Amazon EC2", "dynamic inventory", "autogenerated groups")))((("ec2.py inventory script", "autogenerated groups")))((("groups", "autogenerated by EC2 dynamic inventory script")))create the groups listed in <<genec2_groups>>.
+
+[[genec2_groups]]
+.Generated EC2 groups
+[options="header"]
+|==================================================
+|Type              |Example             |Ansible group name
+|Instance          |i-1234567890abcdef0 |i-1234567890abcdef0
+|AMI               |ami-79df8219        |ami_79df8219
+|Instance type     |c1.medium           |type_c1_medium
+|Security group    |ssh                 |security_group_ssh
+|Key pair           |foo                 |key_foo
+|Region            |us-east-1           |us-east-1
+|Tag               |env=staging         |tag_env_staging
+|Availability zone |us-east-1b          |us-east-1b
+|VPC               |vpc-14dd1b70        |vpc_id_vpc-14dd1b70
+|All ec2 instances |N/A                 |ec2
+|==================================================
+
+The only legal characters in a group name are alphanumeric, hyphen, and
+underscore. The dynamic inventory script will convert any other character into underscore.
+
+For example, say you have an instance with a tag:
+
+----
+Name=My cool server!
+----
+
+Ansible will generate the group name +tag_Name_my_cool_server_+.((("inventory", "dynamic", "using for Amazon EC2 servers", startref="ix_invdynAEC")))((("dynamic inventory", "for servers on Amazon EC2", startref="ix_dyninv2")))((("Amazon EC2", "dynamic inventory", startref="ix_AECdyninv")))
+
+[[GROUPS_WITH_TAGS]]
+=== Defining Dynamic Groups with Tags
+
+Recall that the dynamic inventory script automatically creates groups based on things such as instance type, security group, key pair, and tags. ((("groups", "dynamic, defining with EC2 tags", id="ix_grdyn")))((("Amazon EC2", "defining dynamic groups with tags", id="ix_AECdyngr")))((("tags", "Amazon EC2", "defining dynamic groups with", startref="ix_tagsdyngr")))EC2 tags are the most convenient way of creating Ansible groups because you can define them however you like.
+
+For example, you could tag all of your web servers with this:
+
+----
+type=web
+----
+
+Ansible will automatically create a group called +tag_type_web+ that contains all of the servers tagged with a name of +type+ and a value of +web+.
+
+EC2 allows you to apply multiple tags to an instance.((("instances (Amazon EC2)", "applying tags to"))) For example, if you have separate staging and
+production environments, you can tag your production web servers like this:
+
+----
+env=production
+type=web
+----
+
+Now you can refer to production machines as +tag_env_production+ and your webservers as +tag_type_web+. If you want to refer to your production web servers, use the Ansible intersection syntax, like this:
+
+----
+hosts: tag_env_production:&tag_type_web
+----
+
+==== Applying Tags to Existing Resources
+
+Ideally, you tag your EC2 instances as soon as you create them. However, if
+you're using Ansible to manage existing EC2 instances, you will likely already
+have instances running that you need to tag.((("instances (Amazon EC2)", "adding tags to existing instances")))((("ec2_tag module"))) Ansible has an
++ec2_tag+ module that allows you to add tags to your instances.
+
+For example, if you want to tag an instance with +env=production+ and
++type=web+, you could do it in a simple playbook as shown in
+<<ec2_tags_example>>.
+
+[[ec2_tags_example]]
+.Adding EC2 tags to instances
+====
+[source,yaml+jinja]
+----
+- name: Add tags to existing instances
+  hosts: localhost
+  vars:
+    web_production:
+     - i-1234567890abcdef0
+     - i-1234567890abcdef1
+    web_staging:
+     - i-abcdef01234567890
+     - i-33333333333333333
+  tasks:
+    - name: Tag production webservers
+      ec2_tag: resource={{ item }} region=us-west-1
+      args:
+        tags: { type: web, env: production }
+      with_items: "{{ web_production }}"
+
+    - name: Tag staging webservers
+      ec2_tag: resource={{ item }} region=us-west-1
+      args:
+        tags: { type: web, env: staging }
+      with_items: "{{ web_staging }}"
+
+----
+====
+
+This example uses the inline syntax for YAML dictionaries when specifying the tags (+{ type: web, env: production}+) in order to make the playbook more compact, but the regular YAML dictionary syntax((("YAML", "dictionary syntax, using for EC2 tags"))) would work as well:
+[source,yaml+jinja]
+----
+  tags:
+    type: web
+    env: production
+----
+
+==== Nicer Group Names
+
+Personally, I don't like the name +tag_type_web+ for a group.((("groups", "dynamic, defining with EC2 tags", "nicer group names"))) I prefer to just call it +web+.
+
+To do this, we need to add a new file to the _playbooks/inventory_ directory that will have information about groups.((("inventory", "directory with information about groups"))) This is just a traditional Ansible inventory file, which we'll call _playbooks/inventory/hosts_ (see <<ex-12-5>>).
+
+[[ex-12-5]]
+.playbooks/inventory/hosts
+====
+----
+[web:children]
+tag_type_web
+
+[tag_type_web]
+----
+====
+
+Once you do this, you can refer to +web+ as a group in your Ansible plays.
+
+[WARNING]
+====
+If you don't define the empty +tag_type_web+ group in your static inventory
+file, and the group doesn't exist in the dynamic inventory script, Ansible
+will fail with an error:
+
+----
+ERROR! Attempted to read "/Users/lorin/dev/ansiblebook
+/ch12/playbooks/inventory/hosts" as YAML: 
+'AnsibleUnicode' object has no attribute 'keys'
+Attempted to read "/Users/lorin/dev/ansiblebook
+/ch12/playbooks/inventory/hosts" as ini file:
+/Users/lorin/dev/ansiblebook/ch12
+/playbooks/inventory/hosts:4: 
+Section [web:children] includes undefined group: 
+tag_type_web
+----
+
+====
+
+=== EC2 Virtual Private Cloud and EC2 Classic
+
+When Amazon first launched EC2 back in 2006, all of the EC2 instances were effectively((("groups", "dynamic, defining with EC2 tags", startref="ix_grdyn")))((("Amazon EC2", "defining dynamic groups with tags", startref="ix_AECdyngr")))((("tags", "Amazon EC2", "defining dynamic groups with", startref="ix_tagsdyngr"))) connected to the same flat network.footnote:[Amazon's internal network is divided into subnets, but users do not have any control over how instances are allocated to subnets.] Every EC2 instance had a private IP address and a public IP address.((("Amazon EC2", "Virtual Private Cloud (VPC) and EC2 Classic")))
+
+In 2009, Amazon introduced a new feature called _Virtual Private Cloud_ (VPC). VPC allows users to control how their instances are networked together, and whether they will be publicly accessible from the internet or isolated.((("VPC", see="Virtual Private Cloud")))((("Virtual Private Cloud (VPC)"))) Amazon uses the term _VPC_ to describe the virtual networks that users can create inside EC2. Amazon uses the term _EC2-VPC_ to refer to instances that are launched inside VPCs, and _EC2-Classic_ to refer to instances that are not launched inside((("EC2-Classic")))((("EC2-VPC")))
+VPCs.
+
+Amazon actively encourages users to use EC2-VPC. For example, some instance types, such as _t2.micro_,
+are available only on EC2-VPC. Depending on when your AWS account was created
+and which EC2 regions you've previously launched instances in, you might not
+have ((("EC2-Classic", "finding out if you have access to")))access to EC2-Classic at all. <<CLASSIC_ACCESS>> describes which accounts
+have access to EC2-Classic.footnote:[Go to http://amzn.to/1Fw6v1D[Amazon] for more details on VPC and whether you have access to http://amzn.to/1Fw6w5M[EC2-Classic] in a region.]
+
+
+[[CLASSIC_ACCESS]]
+.Do I have access to EC2-Classic?
+[options="header"]
+|=====================================================================================
+|My account was created                       |Access to EC2-Classic
+|Before March 18, 2013                        |Yes, but only in regions you've used before
+|Between March 18, 2013, and December 4, 2013 |Maybe, but only in regions you've used before
+|After December 4, 2013                       |No
+|=====================================================================================
+
+
+The main difference between having support for EC2-Classic versus having
+access to only EC2-VPC is what happens when you create a new EC2 instance and do not
+explicitly associate a VPC ID with that instance.((("EC2-VPC", "VPC ID"))) If your account has
+EC2-Classic enabled, the new instance is not associated with a VPC. If your
+account does not have EC2-Classic enabled, the new instance is associated with
+the default VPC.
+
+Here's one reason that you should care about the distinction: in EC2-Classic,
+all instances are permitted to make outbound network connections to any host on
+the internet. In EC2-VPC, instances are not permitted to make outbound network
+connections by default. If a VPC instance needs to make outbound connections, it
+must be associated with a security group that permits outbound connections.
+
+For the purposes of this chapter, I'm going to assume EC2-VPC only, so I will
+associate instances with a security group that enables outbound connections.
+
+=== Configuring ansible.cfg for Use with ec2
+
+When I'm using Ansible to configure EC2 instances, ((("ansible.cfg file", "configuring for use with EC2")))((("Amazon EC2", "configuring ansible.cfg for use with")))I add the following lines in my _ansible.cfg_:
+
+[source,ini]
+----
+[defaults]
+remote_user = ubuntu
+host_key_checking = False
+----
+
+I always use Ubuntu images, and on those images you are supposed to SSH as the
+`ubuntu` user.((("host_key_checking", "turning off for use with EC2"))) I also turn off host-key checking, since I don't know in advance
+what the host keys are for new instances.footnote:[It's possible to retrieve the host key by querying EC2 for the instance console output, but I must admit that I never bother to doing this because I've never gotten around to writing a proper script that parses out the host key from the console output.]
+
+
+=== Launching New Instances
+
+The +ec2+ module allows you to launch new instances on EC2.((("instances (Amazon EC2)", "launching new", id="ix_instlaunch")))((("Amazon EC2", "launching new instances", id="ix_AECnewins")))((("ec2 module", "launching new instances on EC2"))) It's
+one of the most complex Ansible modules because it supports so many arguments.
+
+<<simple_create_instance>> shows a simple playbook for launching an Ubuntu 16.04 EC2 instance.((("playbooks", "for creating EC2 instance")))
+
+[[simple_create_instance]]
+.Simple playbook for creating an EC2 instance
+====
+[source,yaml+jinja]
+----
+- name: Create an ubuntu instance on Amazon EC2
+  hosts: localhost
+  tasks:
+  - name: start the instance
+    ec2:
+      image: ami-79df8219
+      region: us-west-1
+      instance_type: m3.medium
+      key_name: mykey
+      group: [web, ssh, outbound]
+      instance_tags: { Name: ansiblebook, type: web, env: production }
+
+----
+====
+
+Let's go over what these parameters mean.
+
+The +image+ parameter refers to the AMI ID, which you must always specify. As described earlier in the chapter, an image is basically a filesystem that contains an installed
+operating system.((("image parameter")))((("AMI ID"))) The example just used, `ami-79df8219`, refers to an image
+that has the 64-bit version of Ubuntu 16.04 installed on it.
+
+The +region+ parameter specifies the geographical((("regions (AWS)", "region parameter"))) region
+where the instance will be launched.footnote:[Visit
+http://amzn.to/1Fw6OcE[Amazon] for a list of supported regions.]
+
+The +instance_type+ parameter describes the number of CPU cores and the amount of memory and
+storage your instance will have.((("instance_type parameter")))((("storage", "for EC2 instances"))) EC2 doesn't let you choose arbitrary
+combinations of cores, memory, and storage. Instead, Amazon defines a collection
+of instance types.footnote:[There's also a handy (unofficial)
+http://www.ec2instances.info[website] that provides a single table with all of the available EC2 instance types.] <<simple_create_instance>> uses the _m3.medium_ instance type. This is a 64-bit instance type with one core, 3.75 GB of RAM, and 4 GB of SSD-based storage.
+
+[WARNING]
+====
+Not all images are compatible with all instance types. I haven't actually tested
+whether `ami-8caa1ce4` works with _m3.medium_. Caveat lector!
+====
+
+The +key_name+ parameter refers to an SSH key pair. ((("SSH", "SSH key pairs", id="ix_SSHkeypr")))((("key_name parameter")))Amazon uses SSH key pairs to provide users with access to their servers. Before you start your first server, you must either create a new SSH key pair, or upload the public key of a key pair that you have previously created. Regardless of whether you create a new key pair or you upload an existing one, you must give a name to your SSH key pair.
+
+The +group+ parameter refers to a list of security groups associated with an instance. ((("security groups", "associated with EC2 instances")))((("groups", "group parameter for EC2 instances")))These groups determine the kinds of inbound and outbound network connections that are permitted.
+
+The +instance_tags+ parameter associates metadata with the instance in the form of EC2 tags, which are key-value pairs.((("tags", "Amazon EC2", "instance_tags parameter")))((("metadata, associating with EC2 instances via tags")))((("instance_tags parameter"))) In the preceding example, we set the following tags:
+
+----
+Name=ansiblebook
+type=web
+env=production
+----
+
+
+[TIP]
+====
+Invoking the +ec2+ module from((("ec2 module", "invoking from command line to terminate an instance"))) the command line is a simple way to terminate an
+instance, assuming you know the instance ID:
+
+----
+$ ansible localhost -m ec2 -a \
+  'instance_id=i-01176c6682556a360 \
+  state=absent'
+----
+====
+
+
+////
+
+A number of things to consider:
+
+- hard-coded the AMI
+- Need to add this to a group
+- Want to do things with this instance
+- Wait for it to come up
+
+////
+
+=== EC2 Key Pairs
+
+In <<simple_create_instance>>, we assumed that Amazon already knew about an SSH key pair named `mykey`.((("Amazon EC2", "launching new instances", startref="ix_AECnewins")))((("instances (Amazon EC2)", "launching new", startref="ix_instlaunch"))) Let's see how we can use Ansible to create new key pairs.((("Amazon EC2", "EC2 key pairs", id="ix_AECkeypr")))((("key pairs (EC2)", id="ix_keypr")))
+
+==== Creating a New Key
+
+When you create a new key pair, Amazon generates a private key and the
+corresponding public key; then it sends you the private key. Amazon does not keep a copy of the private key, so you need to make sure that you save it after you generate it. <<ec2_new_keypair>> shows how to create a new key with Ansible.
+
+[[ec2_new_keypair]]
+.Create a new SSH key pair
+====
+[source,yaml+jinja]
+----
+- name: create a new keypair
+  hosts: localhost
+  tasks:
+  - name: create mykey
+    ec2_key: name=mykey region=us-west-1
+    register: keypair
+
+  - name: write the key to a file
+    copy:
+      dest: files/mykey.pem
+      content: "{{ keypair.key.private_key }}"
+      mode: 0600
+    when: keypair.changed
+
+----
+====
+
+////
+
+TODO: Document that you need to use the complex args invocation of the copy
+module or you get extra newlines in your keyfile
+
+////
+
+In <<ec2_new_keypair>>, we invoke the +ec2_key+ to create a new key pair.((("ec2_key module"))) We then use the +copy+ module with the +content+ parameter in order to save the SSH private key to a file.((("copy module", "using to save SSH private key to file")))
+
+If the module creates a new key pair, the variable +keypair+ that is registered will contain a value((("keypair variable"))) that looks like this:
+
+[role="pagebreak-before"]
+[source,json]
+----
+"keypair": {
+  "changed": true,
+  "key": {
+    "fingerprint": "c5:33:74:84:63:2b:01:29:6f:14:a6:1c:7b:27:65:69:61:f0:e8:b9",
+    "name": "mykey",
+    "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAjAJpvhY3QGKh
+...
+0PkCRPl8ZHKtShKESIsG3WC\n-----END RSA PRIVATE KEY-----"
+    }
+  }
+----
+
+If the key pair already exists, the variable +keypair+ that is registered will contain a value that looks like this:
+[source,json]
+----
+"keypair": {
+  "changed": false,
+  "key": {
+    "fingerprint": "c5:33:74:84:63:2b:01:29:6f:14:a6:1c:7b:27:65:69:61:f0:e8:b9",
+    "name": "mykey"
+  }
+}
+----
+
+Because the +private_key+ value will((("private_key variable"))) not be present if the key already exists, we need to add a +when+ clause to the +copy+ invocation to make sure that we write a private key file to disk only if there is a private-key file to write.
+
+We add this line:
+
+----
+when: keypair.changed
+----
+
+to write the file to disk only if there was a change of state when +ec2_key+ was invoked (i.e., that a new key was created).  Another way we could have done it is to check for the existence of the +private_key+ value, like this:
+[source,yaml+jinja]
+----
+  - name: write the key to a file
+    copy:
+      dest: files/mykey.pem
+      content: "{{ keypair.key.private_key }}"
+      mode: 0600
+    when: keypair.key.private_key is defined
+----
+
+We use the Jinja2 +defined+ testfootnote:[For more information on Jinja2 tests, see the http://bit.ly/1Fw77nO[Jinja2 documentation page on built-in tests].] to check whether +private_key+ is present.
+
+==== Uploading an Existing Key
+
+If you already have an SSH public key, you can upload that to Amazon and associate it with a key pair:
+[source,yaml+jinja]
+----
+- name: create a keypair based on my ssh key
+  hosts: localhost
+  tasks:
+  - name: upload public key
+    ec2_key: name=mykey key_material="{{ item }}"
+    with_file: ~/.ssh/id_rsa.pub
+----
+
+=== Security Groups
+
+<<simple_create_instance>> assumes that the `web`, `ssh`, and `outbound` security groups
+already exist.((("key pairs (EC2)", startref="ix_keypr")))((("SSH", "SSH key pairs", startref="ix_SSHkeypr")))((("Amazon EC2", "EC2 key pairs", startref="ix_AECkeypr"))) We can use the +ec2_group+ module to ensure that these security
+groups have been created before we use them.((("Amazon EC2", "security groups", id="ix_AECsecgr")))((("security groups", id="ix_secgr")))
+
+Security groups are similar to firewall rules: you specify rules about who is
+allowed to connect to the machine and how.
+
+In <<SECURITY_GROUPS>>, we specify the `web` group as allowing anybody on the
+internet to connect to ports 80 and 443. For the `ssh` group, we allow
+anybody on the internet to connect on port 22. For the `outbound` group, we
+allow outbound connections to anywhere on the internet. We need outbound
+connections enabled in order to download packages from the internet.
+
+[[SECURITY_GROUPS]]
+.Security groups
+====
+[source,yaml+jinja]
+----
+- name: web security group
+  ec2_group:
+    name: web
+    description: allow http and https access
+    region: "{{ region }}"
+    rules:
+      - proto: tcp
+        from_port: 80
+        to_port: 80
+        cidr_ip: 0.0.0.0/0
+      - proto: tcp
+        from_port: 443
+        to_port: 443
+        cidr_ip: 0.0.0.0/0
+
+- name: ssh security group
+  ec2_group:
+    name: ssh
+    description: allow ssh access
+    region: "{{ region }}"
+    rules:
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: 0.0.0.0/0
+
+- name: outbound group
+  ec2_group:
+    name: outbound
+    description: allow outbound connections to the internet
+    region: "{{ region }}"
+    rules_egress:
+      - proto: all
+        cidr_ip: 0.0.0.0/0
+
+----
+====
+
+[NOTE]
+====
+If you are using EC2-Classic, you don't need to specify the +outbound+ group, since EC2-Classic does not restrict outbound connections on instances.
+====
+
+If you haven't ((("security groups", "rule parameters")))used security groups before, the parameters to the rules
+dictionary bear some explanation. <<security_group_table>> provides a quick
+summary of the parameters for security group connection rules.
+
+
+[[security_group_table]]
+.Security group rule parameters
+[options="header"]
+|===========================================================================================
+|Parameter |Description
+|proto     |IP protocol (+tcp+, +udp+, +icmp+) or +all+ to allow all protocols and ports
+|cidr_ip   |Subnet of IP addresses that are allowed to connect, using CIDR notation
+|from_port |The first port in the range of permitted ports
+|to_port   |The last port in the range of permitted ports
+|===========================================================================================
+
+==== Permitted IP Addresses
+
+Security groups allow you to restrict which IP addresses are permitted to
+connect to an instance.((("IP addresses", "permitted to connect to EC2 instances")))((("security groups", "IP addresses permitted to connect to an instance")))((("CIDR notation")))((("subnets", "specifying with CIDR notation"))) You specify a subnet by using classless interdomain routing (CIDR) notation. An example of a subnet specified with CIDR notation is _203.0.113.0/24_,footnote:[This example happens to correspond to a special IP
+address range named
+TEST-NET-3, which is reserved for examples. It's the example.com of
+IP subnets.] which means that the first 24 bits of the IP address must match
+the first 24 bits of _203.0.113.0_. People sometimes just say "/24" to refer to
+the size of a CIDR that ends in _/24_.
+
+A _/24_ is a nice value because it corresponds to the first three octets of the address, namely _203.0.113_.footnote:[Subnets that are /8, /16, and /24 make great examples because the math is much easier than, say, /17 or /23.] What this means is that any IP address that starts with _203.0.113_ is in the subnet, meaning any IP address in the range _203.0.113.0_ to _203.0.113.255_.
+
+If you specify _0.0.0.0/0_, any IP address is permitted to connect.
+
+
+==== Security Group Ports
+
+One of the things that I find confusing about EC2 security groups is the +from port+ and +to port+ notation.((("security groups", "ports")))((("ports", "specifying range of ports for security groups"))) EC2 allows you to specify a range of ports that you are allowed to access. For example, you could indicate that you are allowing TCP connections on any port from 5900 to 5999 by specifying the following:
+[source,yaml+jinja]
+----
+- proto: tcp
+  from_port: 5900
+  to_port: 5999
+  cidr_ip: 0.0.0.0/0
+----
+
+However, I often find the from/to notation confusing, because I
+almost never specify a range of ports.footnote:[Astute observers might have noticed that ports 5900–5999 are commonly used by the VNC remote desktop protocol, one of the few applications where specifying a range of ports makes sense.] Instead, I usually want to enable nonconsecutive ports, such as 80 and 443. Therefore, in almost every case, the +from_port+ and +to_port+ parameters are going to be the same.
+
+The +ec2_group+ module has other parameters, including specifying inbound rules by using security group IDs, as well as specifying outbound connection rules. Check out the module's documentation for more details.((("Amazon EC2", "security groups", startref="ix_AECsecgr")))((("security groups", startref="ix_secgr")))
+
+=== Getting the Latest AMI
+
+In <<simple_create_instance>>, we explicitly ((("Amazon machine image (AMI)", "getting the latest")))((("Amazon EC2", "getting the latest AMI")))specified the AMI like this:
+[source,yaml+jinja]
+----
+      image: ami-79df8219
+----
+
+However, if you want to launch the ((("Ubuntu", "retrieving latest Ubuntu AMI")))latest Ubuntu 16.04 image, you don't
+want to hardcode the AMI like this. That's because Canonicalfootnote:[Canonical is the company that runs the Ubuntu project.] frequently makes minor updates to Ubuntu, and every time it makes a minor update, it generates a new AMI. Just because +ami-79df8219+ corresponds to the latest release of Ubuntu 16.04 yesterday doesn't mean it will correspond to the latest release of Ubuntu 16.04 tomorrow.
+
+Ansible ships with a module called `ec2_ami_find` that will retrieve a list of
+AMIs based on search criteria, such as the name of the image or by tags.((("ec2_ami_find module")))
+<<latest_ami>> shows how to use this to launch an AMI for the latest
+version of 64-bit Ubuntu Xenial Xerus 16.04 running for an EBS-backed instance that
+uses SSDs.
+
+[[latest_ami]]
+.Retrieving the latest Ubuntu AMI
+====
+[source,yaml+jinja]
+----
+- name: Create an ubuntu instance on Amazon EC2
+  hosts: localhost
+  tasks:
+  - name: Get the ubuntu xenial ebs ssd AMI
+    ec2_ami_find:
+      name: "ubuntu/images/ebs-ssd/ubuntu-xenial-16.04-amd64-server-*"
+      region: "{{ region }}"
+      sort: name
+      sort_order: descending
+      sort_end: 1
+	  no_result_action: fail
+    register: ubuntu_image
+
+  - name: start the instance
+    ec2:
+      region: "{{ region }}"
+      image: "{{ ubuntu_image.results[0].ami_id }}"
+      instance_type: m3.medium
+      key_name: mykey
+      group: [web, ssh, outbound]
+      instance_tags: { type: web, env: production }
+
+----
+====
+
+Here we needed to know the naming convention that Ubuntu uses for their images.
+In Ubuntu's case, the image name always ends with a date stamp, for example:
+_ubuntu/images/ebs-ssd/ubuntu-xenial-16.04-amd64-server-20170202_.
+
+The +name+ option for the +ec2_ami_find+ module permits specifying +*+ as a
+glob, so the way we get the most recent image is to sort, descending by name, and
+limit our search to just one item.
+
+By default, the +ec2_ami_find+ module will return success even if no AMIs match
+the search. Since this is almost never what you want, I recommend adding the
++no_result_action: fail+ option in order to force the module to fail if the AMI
+search yields no results.
+
+
+[NOTE]
+====
+Each distribution uses its own naming strategy for AMIs, so if you want to deploy an AMI
+from a distribution other((("Linux distributions", "Amazon Machine Image (AMI)"))) than Ubuntu, you'll need to do some research to figure out the
+appropriate search string.
+====
+
+
+
+=== Adding a New Instance to a Group
+
+Sometimes I like to write a single playbook that launches an instance and then
+runs a playbook against that instance.((("Amazon EC2", "adding new instance to a group", id="ix_AECaddinst")))((("instances (Amazon EC2)", "adding new instance to a group", id="ix_instadd")))((("groups", "in EC2, adding new instance to", id="ix_grnewins")))
+
+Unfortunately, before you've run the playbook, the host doesn't exist yet. Disabling caching on the dynamic inventory script won't help here, because Ansible invokes the dynamic inventory script only at the beginning of playbook execution, which is before the host exists.
+
+You can add a task that uses the +add_host+ module to add ((("add_host module", "task adding an instance to groups")))the instance to a
+group, as shown in <<adding-an-instance-to-a-group>>.
+
+[[adding-an-instance-to-a-group]]
+.Adding an instance to groups
+====
+[source,yaml+jinja]
+----
+- name: Create an ubuntu instance on Amazon EC2
+  hosts: localhost
+  tasks:
+  - name: start the instance
+    ec2:
+      image: ami-8caa1ce4
+      instance_type: m3.medium
+      key_name: mykey
+      group: [web, ssh, outbound]
+      instance_tags: { type: web, env: production }
+    register: ec2
+
+  - name: add the instance to web and production groups
+    add_host: hostname={{ item.public_dns_name }} groups=web,production
+    with_items: "{{ ec2.instances }}"
+
+- name: do something to production webservers
+  hosts: web:&production
+  tasks:
+  - ...
+
+----
+====
+
+
+[[EC2_RETURN_TYPE]]
+.Return Type of the ec2 Module
+****
+The +ec2+ module returns a dictionary with three fields, shown in <<table12-4>>.
+
+++++
+<table id="table12-4"><caption class="width-full">Return value of ec2 module</caption>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>instance_ids</td>
+<td>List of instance IDs</td>
+</tr>
+<tr>
+<td>instances</td>
+<td>List of instance dicts</td>
+</tr>
+<tr>
+<td>tagged_instances</td>
+<td>List of instance dicts</td>
+</tr>
+</tbody>
+</table>
+++++
+
+
+If the user passes the +exact_count+ parameter to the +ec2+ module, the module might not create new instances, as described in <<ec2_idempotent>>. In this case, the +instance_ids+ and +instances+ fields will be populated only if the module creates new instances. However, the +tagged_instances+ field will pass:[<span class="keep-together">contain</span>] instance +dicts+ for all of the instances that match the tags, whether they were just created or already existed.((("dictionaries", "instance dict for EC2 instances")))
+
+An instance +dict+ contains the fields shown in <<table12-5>>.
+
+[[table12-5]]
+.Contents of instance dicts
+[options="header"]
+|===========================================================================================
+|Parameter            |Description
+|id                   |Instance ID
+|ami_launch_index     |Instance index within a reservation (between 0 and __N__ – 1) if _N_ launched
+|private_ip           |Internal IP address (not routable outside EC2)
+|private_dns_name     |Internal DNS name (not routable outside EC2)
+|public_ip            |Public IP address
+|public_dns_name      |Public DNS name
+|state_code           |Reason code for the state change
+|architecture         |CPU architecture
+|image_id             |AMI
+|key_name             |Key pair name
+|placement            |Location where the instance was launched
+|kernel               |AKI (Amazon kernel image)
+|ramdisk              |ARI (Amazon ramdisk image)
+|launch_time          |Time instance was launched
+|instance_type        |Instance type
+|root_device_type     |Type of root device (ephemeral, EBS)
+|root_device_name     |Name of root device
+|state                |State of instance
+|hypervisor           |Hypervisor type
+|===========================================================================================
+
+For((("Boto library", "Instance class documentation"))) more details on what these fields mean, check out the Boto documentation for the http://bit.ly/1Fw7HSO[+boto.ec2.instance.Instance+] class  or the documentation for the output of the +run-instances+ command of http://amzn.to/1Fw7Jd9[Amazon's command-line tool].
+
+****
+
+=== Waiting for the Server to Come Up
+
+While IaaS clouds like EC2 are remarkable feats of technology, they still require
+a finite amount of time to create new instances.((("Amazon EC2", "adding new instance to a group", startref="ix_AECaddinst")))((("instances (Amazon EC2)", "adding new instance to a group", startref="ix_instadd")))((("groups", "in EC2, adding new instance to", startref="ix_grnewins"))) You
+can't run a playbook against an EC2 instance immediately after you've submitted
+a request to create it.((("instances (Amazon EC2)", "waiting for instance to come up"))) Instead, you need to wait for the EC2 instance to come up.((("Amazon EC2", "waiting for SSH server to come up", id="ix_AECwait")))
+
+The +ec2+ module supports a +wait+ parameter.((("ec2 module", "wait parameter"))) If it's set to `yes`, the +ec2+ task will not return until the instance has transitioned to the running state:
+[source,yaml+jinja]
+----
+  - name: start the instance
+    ec2:
+      image: ami-8caa1ce4
+      instance_type: m3.medium
+      key_name: mykey
+      group: [web, ssh, outbound]
+      instance_tags: { type: web, env: production }
+      wait: yes
+    register: ec2
+----
+
+Unfortunately, waiting for the instance to be in the running state isn't enough
+to ensure that you can execute a playbook against a host. You still
+need to wait until the instance has advanced far enough in the boot process that
+the SSH server has started and is accepting incoming connections.
+
+The +wait_for+ module is designed for this kind of scenario.((("wait_for module")))((("ec2 module", "using with wait_for module"))) Here's how you would use the +ec2+ and +wait_for+ modules in concert to start an instance and then wait until the instance is ready to receive SSH connections:
+[source,yaml+jinja]
+----
+  - name: start the instance
+    ec2:
+      image: ami-8caa1ce4
+      instance_type: m3.medium
+      key_name: mykey
+      group: [web, ssh, outbound]
+      instance_tags: { type: web, env: production }
+      wait: yes
+    register: ec2
+
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: "{{ ec2.instances }}"
+----
+
+This invocation of +wait_for+ uses the +search_regex+ argument to look for the string +OpenSSH+ after connecting to the host.((("OpenSSH", "looking for string containing")))((("search_regex argument"))) This +regex+ takes advantage of the fact that a fully functioning SSH server will return a string that looks something like <<UBUNTU_SSH_SERVER>> when an SSH client first connects.((("regular expressions, search_regex parameter")))
+
+[[UBUNTU_SSH_SERVER]]
+.Initial response of an SSH server running on Ubuntu
+====
+----
+SSH-2.0-OpenSSH_5.9p1 Debian-5ubuntu1.4
+----
+====
+
+We could invoke the +wait_for+ module to just check if port 22 is listening for
+incoming connections. However, sometimes an SSH server has gotten far enough
+along in the startup process that it is listening on port 22, but is not fully
+functional yet. pass:[<span class="keep-together">Waiting</span>] for the initial response ensures that the +wait_for+
+module will return only when the SSH server has fully started up.((("Amazon EC2", "waiting for SSH server to come up", startref="ix_AECwait")))
+
+
+[[ec2_idempotent]]
+=== Creating Instances the Idempotent Way
+
+Playbooks that invoke the +ec2+ module are not generally idempotent. If you were to execute <<simple_create_instance>> multiple times, EC2 would create multiple instances.((("Amazon EC2", "idempotent instance creation")))((("idempotence", "idempotent instance creation")))((("instances (Amazon EC2)", "idempotent creation of")))
+
+You can write idempotent playbooks with the +ec2+ module by using the +count_tag+ and +exact_count+ parameters.((("ec2 module", "idempotent instance creation"))) Let's say we want to write a playbook that starts three instances. We want this
+playbook to be idempotent, so if three instances are already running, we
+want the playbook to do nothing. <<idempotent_instance_creation>> shows what it
+would look like.
+
+
+[[idempotent_instance_creation]]
+.Idempotent instance creation
+====
+[source,yaml+jinja]
+----
+  - name: start the instance
+    ec2:
+      image: ami-8caa1ce4
+      instance_type: m3.medium
+      key_name: mykey
+      group: [web, ssh, outbound]
+      instance_tags: { type: web, env: production }
+      exact_count: 3
+      count_tag: { type: web }
+
+----
+====
+
+The +exact_count: 3+ parameter tells Ansible to ensure that exactly three instances are running that match the tags specified in +count_tag+. ((("tags", "Amazon EC2", "count_tag parameter")))In our example, I specified only one tag for +count_tag+, but it does support multiple tags.
+
+When running this playbook for the first time, Ansible will check how many instances
+are currently running that are tagged with +type=web+. Assuming there are
+no such instances, Ansible will create three new instances and tag them with
++type=web+ and +env=production+.
+
+When running this playbook the next time, Ansible will check how many instances
+are currently running that are tagged with +type=web+. It will see that there
+are three instances running and will not start any new instances.
+
+=== Putting It All Together
+
+<<ec2_all_together>> shows the playbook that creates three EC2 instances and configures them as web servers.((("Amazon EC2", "playbook creating three instances and configuring them as web servers")))((("playbooks", "example, complete EC2 playbook"))) The playbook is idempotent, so you can safely run it multiple times, and it will create new instances only if they haven't been created yet.
+
+Note that we use the +tagged_instances+ return value of the +ec2+ module, instead of the +instances+ return value, for reasons described in <<EC2_RETURN_TYPE>>.  This example uses the Ubuntu Xenial AMI, which doesn't come
+pre-installed with Python 2. Therefore, we install Python 2.7 by using the +pre_tasks+ clause.
+
+[[ec2_all_together]]
+.ec2-example.yml: complete EC2 playbook
+====
+[source,yaml+jinja]
+----
+include::playbooks/ec2-example.yml[]
+----
+====
+
+=== Specifying a Virtual Private Cloud
+
+So far, we've been launching our instances into the default Virtual Private Cloud (VPC). Ansible also allows us to create new VPCs and launch instances into them.((("Virtual Private Cloud (VPC)", "creating and launching instances into", id="ix_VPC")))
+
+[role="pagebreak-before less_space"]
+.What Is a VPC?
+****
+Think of a VPC as an isolated network. When you create a VPC, you specify an IP
+address range. It must be a subset of one of the private address ranges
+(_10.0.0.0/8_, _172.16.0.0/12_, or _192.168.0.0/16_).
+
+You carve your VPC into subnets, which have IP ranges that are subsets of the
+IP range of your entire VPC.((("subnets", "in VPCs"))) In <<CREATE_VPC>>, the VPC has the
+IP range _10.0.0.0/16_, and we associate two subnets: _10.0.0.0/24_ and _10.0.10/24_.
+
+When you launch an instance, you assign it to a subnet in a VPC. You can
+configure your subnets so that your instances get either public or private IP
+addresses. EC2 also allows you to define routing tables for routing
+traffic between your subnets and to create internet gateways for routing traffic
+from your subnets to the internet.
+
+Configuring networking is a complex topic that's (way) outside the scope of this book.
+For more info, check out Amazon's http://amzn.to/1Fw89Af[EC2 documentation on VPC].
+
+****
+
+<<CREATE_VPC>> shows how to create a VPC with an internet gateway,((("ec2_vpc_net")))((("internet gateway, VPC with"))) two subnets,
+and a routing table that routes outbound connections using the internet gateway.((("routing table for a VPC")))
+
+[[CREATE_VPC]]
+.create-vpc.yml: creating a VPC
+====
+[source,yaml+jinja]
+----
+- name: create a vpc
+  ec2_vpc_net:
+    region: "{{ region }}"
+    name: "Book example"
+    cidr_block: 10.0.0.0/16
+    tags:
+      env: production
+  register: result
+- set_fact: "vpc_id={{ result.vpc.id }}"
+- name: add gateway
+  ec2_vpc_igw:
+    region: "{{ region }}"
+    vpc_id: "{{ vpc_id }}"
+- name:  create web subnet
+  ec2_vpc_subnet:
+    region: "{{ region }}"
+    vpc_id: "{{ vpc_id }}"
+    cidr: 10.0.0.0/24
+    tags:
+      env: production
+      tier: web
+- name: create db subnet
+  ec2_vpc_subnet:
+    region: "{{ region }}"
+    vpc_id: "{{ vpc_id }}"
+    cidr: 10.0.1.0/24
+    tags:
+      env: production
+      tier: db
+- name: set routes
+  ec2_vpc_route_table:
+    region: "{{ region }}"
+    vpc_id: "{{ vpc_id }}"
+    tags:
+      purpose: permit-outbound
+    subnets:
+      - 10.0.0.0/24
+      - 10.0.1.0/24
+    routes:
+      - dest: 0.0.0.0/0
+        gateway_id: igw
+----
+====
+
+Each of these commands((("idempotence", "logic for checking for VPC modules"))) is idempotent, but the idempotence-checking mechanism
+differs slightly per module, as shown in <<table_idempotent>>.
+
+[[table_idempotent]]
+.Idempotence-checking logic for some VPC modules
+[options="header"]
+|=================================================
+| Module              | Idempotence check
+| ec2_vpc_net         | Name and CIDR options
+| ec2_vpc_igw         | An internet gateway exists
+| ec2_vpc_subnet      | vpc_id and CIDR options
+| ec2_vpc_route_table | vpc_id and tags footnote:[If the +lookup+ option is set
+to `id`, the +route_table_id+ option will be used instead of +tags+ for
+idempotence check]
+|=================================================
+
+If multiple entities match the idempotent check, Ansible will fail the
+module.
+
+[WARNING]
+====
+If you don't specify tags to the +ec2_vpc_route_table+, it will create a new
+route table each time you execute the module.
+====
+
+Admittedly, <<CREATE_VPC>> is a simple example from a networking perspective, as
+we've just defined two subnets that both can connect out to the internet. A more
+realistic example would have one subnet that's routable to the internet, and
+another subnet that's not routable to the internet, and we'd have some rules for
+routing traffic between the two subnets.((("playbooks", "example, EC2 playbook creating VPC and launching instance into it")))
+
+<<ec2_vpc_example>> shows a complete example of creating a VPC and launching
+instances into it.
+[[ec2_vpc_example]]
+.ec2-vpc-example.yml: complete EC2 playbook that specifies a VPC
+====
+[source,yaml+jinja]
+----
+include::playbooks/ec2-vpc-example.yml[]
+----
+====
+
+==== Dynamic Inventory and VPC
+
+When using a VPC, you often will place some instances inside a private
+subnet that is not routable from the internet.((("inventory", "dynamic", "and VPCs")))((("dynamic inventory", "and Virtual Private Cloud (VPC)")))((("Virtual Private Cloud (VPC)", "creating and launching instances into", "dynamic inventory and"))) When you do this, no
+public IP address is associated with the instance.
+
+In this case, you might want to run Ansible from an instance inside your
+VPC. The Ansible dynamic inventory script is smart enough that it will return
+internal IP addresses for VPC instances that don't have public IP addresses.
+
+See <<IAM>> for details on how to use IAM roles to run Ansible inside a
+    VPC without needing to copy EC2 credentials to the instance.
+
+
+
+=== Building AMIs
+
+There are two approaches you can take to creating custom Amazon Machine Images (AMIs) with Ansible.((("Virtual Private Cloud (VPC)", "creating and launching instances into", startref="ix_VPC"))) You can use the +ec2_ami+ module, or you can use a third-party tool called Packer that has support for Ansible.((("Amazon EC2", "building AMIs", id="ix_AECbuildAMI")))((("Amazon machine image (AMI)", "building with ec2_ami module")))
+
+==== With the ec2_ami Module
+
+The +ec2_ami+ module will take a running instance and snapshot it into an AMI. <<CREATE_AMI>> shows this module in action.((("ec2_ami module")))
+
+[[CREATE_AMI]]
+.Creating an AMI with the ec2_ami module
+====
+[source,yaml+jinja]
+----
+- name: create an AMI
+  hosts: localhost
+  vars:
+    instance_id: i-e5bfc266641f1b918
+  tasks:
+    - name: create the AMI
+      ec2_ami:
+        name: web-nginx
+        description: Ubuntu 16.04 with nginx installed
+        instance_id: "{{ instance_id }}"
+        wait: yes
+      register: ami
+
+    - name: output AMI details
+      debug: var=ami
+----
+====
+
+==== With Packer
+
+The +ec2_ami+ module works just fine, but you have to write additional code
+to create and terminate the instance.((("Amazon machine image (AMI)", "building with Packer", id="ix_AMIbuildPack")))((("Packer", id="ix_Pack"))) There's an open source tool called https://www.packer.io[Packer] that will automate the creation and termination of an instance for you. Packer also happens to be written by Mitchell Hashimoto, the creator of Vagrant.
+
+Packer can create different types of images and works with different
+configuration management tools. This section focuses on using Packer to create
+AMIs using Ansible, but you can also use Packer to create images for other IaaS
+clouds, such as Google Compute Engine, DigitalOcean, or OpenStack.((("Packer", "using to build AMIs", "steps in process"))) It can even be
+used to create Vagrant boxes and Docker containers. It also supports other
+configuration management tools, such as Chef, Puppet, and Salt.
+
+To use Packer, you create a configuration ((("JSON", "Packer configuration files")))file in JSON format (called a
+_template_) and then use the
++packer+ command-line tool to create the image using the configuration file.((("templates", "Packer configuration files in JSON")))
+
+Packer provides two mechanisms (called _provisioners_) for using
+Ansible to create an AMI: the newer Ansible Remote provisioner (called
++ansible+) and the older Ansible Local
+provisioner (called +ansible-local+). ((("Ansible remote provisioner (ansible)")))((("Ansible local provisioner (ansible-local)")))To understand the difference, you first need to understand how
+Packer works.((("provisioners", "in Packer, using Ansible to build AMIs")))
+
+When you use Packer to build an AMI, Packer executes the following steps:
+
+. Launches a new EC2 instance based on the AMI specified in your template
+. Creates a temporary key pair and security group
+. Uses SSH to log into the new instance and executes any provisioners specified in the
+template
+. Stops the instance
+. Creates a new AMI
+. Deletes the instance, security group, and key pair
+. Outputs the AMI ID to the terminal
+
+===== Ansible Remote Provisioner
+
+When using the Ansible Remote provisioner, Packer will run Ansible on your local
+machine.((("Ansible remote provisioner (ansible)", "using", id="ix_AnsRP")))((("Packer", "using to build AMIs", "Ansible remote provisioner"))) When using the Ansible Local provisioner, Packer will copy the
+playbook files over to the instance and run Ansible from the instance. I prefer
+the Ansible Remote provisioner because the template is simpler, as you'll see.
+
+We'll start with the Ansible Remote provisioner. <<web_ami>> shows the _web-ami.yml_ playbook we will use for configuring the
+instance that will be used to create the image. It's a simple playbook that
+applies the +web+ role to a machine named +default+. Packer
+creates the +default+ alias by, well, default. If you like, you can change the alias name by
+specifying a +host_alias+ parameter in the Ansible section of the Packer
+template.
+
+[[web_ami]]
+.web-ami.yml
+====
+----
+- name: configure a webserver as an ami
+  hosts: default
+  become: True
+  roles:
+    - web
+----
+====
+
+<<packer_json>> shows a sample Packer template that uses the Ansible Remote
+provisioner to create an AMI using our playbook.
+
+[[packer_json]]
+.web.json using Remote Ansible provisioner
+====
+[source,json]
+----
+include::packer/web.json[]
+----
+====
+
+
+Use the +packer build+ command to((("packer build command"))) create the AMI:
+
+----
+$ packer build web.json
+----
+
+The output looks like this:
+
+----
+==> amazon-ebs: Prevalidating AMI Name...
+    amazon-ebs: Found Image ID: ami-79df8219
+==> amazon-ebs: Creating temporary keypair:
+packer_58a0d118-b798-62ca-50d3-18d0e270e423
+==> amazon-ebs: Creating temporary security group for this instance...
+==> amazon-ebs: Authorizing access to port 22 the temporary security group...
+==> amazon-ebs: Launching a source AWS instance...
+    amazon-ebs: Instance ID: i-0f4b09dc0cd806248
+==> amazon-ebs: Waiting for instance (i-0f4b09dc0cd806248) to become ready...
+==> amazon-ebs: Adding tags to source instance
+==> amazon-ebs: Waiting for SSH to become available...
+==> amazon-ebs: Connected to SSH!
+==> amazon-ebs: Provisioning with shell script: /var/folders/g_/523vq6g1037d1
+0231mmbx1780000gp/T/packer-shell574734910
+...
+
+==> amazon-ebs: Stopping the source instance...
+==> amazon-ebs: Waiting for the instance to stop...
+==> amazon-ebs: Creating the AMI: web-nginx-1486934296
+    amazon-ebs: AMI: ami-42ffa322
+==> amazon-ebs: Waiting for AMI to become ready...
+==> amazon-ebs: Adding tags to AMI (ami-42ffa322)...
+==> amazon-ebs: Tagging snapshot: snap-01b570285183a1d35
+==> amazon-ebs: Creating AMI tags
+==> amazon-ebs: Creating snapshot tags
+==> amazon-ebs: Terminating the source AWS instance...
+==> amazon-ebs: Cleaning up any extra volumes...
+==> amazon-ebs: No volumes to clean up, skipping
+==> amazon-ebs: Deleting temporary security group...
+==> amazon-ebs: Deleting temporary keypair...
+
+Build 'amazon-ebs' finished.
+
+==> Builds finished. The artifacts of successful builds are:
+--> amazon-ebs: AMIs were created:
+
+us-west-1: ami-42ffa322
+----
+
+<<packer_json>> has two sections: +builders+ and +provisioners+. The +builders+ section refers to the type of image being created. In our case, we are creating an Elastic Block Store–backed (EBS) AMI, so we use the +amazon-ebs+ builder.
+
+Because Packer needs to start a new instance to create an AMI, you need to configure
+Packer with all of the information typically needed when creating an instance:
+EC2 region, AMI, and instance type.((("security groups", "Packer and"))) Packer doesn't need to be configured with a
+security group because, as mentioned earlier, it will create a temporary security group automatically,
+and then delete that security group when it is finished. Like Ansible, Packer needs to be able to SSH to the created instance. Therefore, you need to specify the SSH username in the Packer configuration file.
+
+You also need to tell Packer what to name your instance, as well as any tags you
+want to apply to your instance. Because AMI names must be unique, we
+use the pass:[<span class="keep-together"><code>{{timestamp}}</code></span>] function to insert a Unix timestamp. A Unix timestamp encodes the date and time as the number of seconds since Jan. 1, 1970, UTC. See the http://bit.ly/1Fw9hEc[Packer documentation] for more information about the functions that Packer pass:[<span class="keep-together">supports</span>].
+
+Because Packer needs to interact with EC2 to create the AMI, it needs access to
+your EC2 credentials.((("credentials", "in Amazon EC2", "Packer access to"))) Like Ansible, Packer can read your EC2 credentials from
+environment variables, so you don't need to specify them explicitly in the
+configuration file, although you can if you prefer.
+
+The +provisioners+ section refers to the tools used to configure the instance
+before it is captured as an image.  Packer supports a shell provisioner that lets you run arbitrary commands on the
+instance. <<packer_json>> uses this provisioner to install Python 2. To avoid a race situation with trying to install packages
+before the operating system is fully booted up, the shell provisioner in our
+example is configured to wait for 30 seconds before installing Ansible.((("Ansible remote provisioner (ansible)", "using", startref="ix_AnsRP")))
+
+===== Ansible Local Provisioner
+
+Using the Ansible Local Provisioner is similar to using the remote version,
+but there are some differences to be aware of.((("Packer", "using to build AMIs", "Ansible local provisioner")))((("Ansible local provisioner (ansible-local)", "using")))
+
+By default, the Ansible local provisioner copies only the playbook file itself to the
+remote host: any files that the playbook depends on are not automatically
+copied. To address the need for accessing multiple files, Packer allows you to
+specify a directory to be recursively copied into a staging directory on the
+instance, using the +playbook_dir+ option. Here's an example of section of a
+Packer template that specifies a directory:
+
+----
+{
+  "type": "ansible-local",
+  "playbook_file": "web-ami-local.yml",
+  "playbook_dir": "../playbooks"
+}
+----
+
+If all of the files to be copied up are part of roles, you can explicitly
+specify a list of role directories, using the +role_paths+ option:
+
+----
+{
+   "type": "ansible-local",
+   "playbook_file": "web-ami-local.yml",
+   "role_paths": [
+     "../playbooks/roles/web"
+   ]
+ }
+----
+
+Another important difference is that you need to use +localhost+ instead of
++default+ in the +hosts+ clause of your playbook.
+
+Packer has a lot more functionality than we can cover here, including numerous
+options for both types of Ansible provisioners. Check out its https://www.packer.io/docs/[documentation] for more details.((("Packer", startref="ix_Pack")))((("Amazon machine image (AMI)", "building with Packer", startref="ix_AMIbuildPack")))((("Amazon EC2", "building AMIs", startref="ix_AECbuildAMI")))
+
+=== Other Modules
+
+Ansible supports even more of EC2, as well as
+other AWS services.((("modules", "other modules supporting Amazon EC2")))((("Amazon EC2", "other Ansible modules supporting"))) For example, you can use Ansible to launch CloudFormation
+stacks with the +cloudformation+ module, put files into S3 with the +s3+ module,
+modify DNS records with the +route53+ module, create autoscaling groups with the
++ec2_asg+ module, create autoscaling configuration with the +ec2_lc+ module, and
+much more.((("ec2_lc module")))((("ec2_asg module")))((("route53 module")))((("cloudformation module")))
+
+Using Ansible with EC2 is a large enough topic that you could write a whole book
+about it. In fact, Yan Kurniawan wrote a book on <<ansible-aws,Ansible and
+AWS>>. After digesting this chapter, you should have enough knowledge under your
+belt to pick up these additional modules without
+difficulty.((("Amazon EC2", startref="ix_AEC")))

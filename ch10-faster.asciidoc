@@ -1,0 +1,577 @@
+[[connections-ssh]]
+== Making Ansible Go Even Faster
+
+Once you start using Ansible on a regular basis, you'll often find yourself wishing that your playbooks could run more quickly.((("performance, making Ansible faster", id="ix_perf"))) This chapter presents strategies for reducing the time it takes Ansible to
+execute playbooks.((("execution time, reducing", see="performance, making Ansible faster")))
+
+=== SSH Multiplexing and ControlPersist
+
+If you've made it this far in the book, you know that Ansible uses SSH as its primary transport mechanism for communicating with servers.((("performance, making Ansible faster", "SSH multiplexing and ControlPersist", id="ix_perfSSHmul")))((("SSH multiplexing and ControlPersist", id="ix_SSHmul"))) In particular, Ansible uses the system SSH program by default.
+
+Because the SSH protocol runs on top of the TCP protocol, when you make a connection to a remote machine with SSH, you need to make a new TCP connection. The client and server have to negotiate this connection before you can actually start doing useful work. The negotiation takes a small amount of time.
+
+When Ansible runs a playbook, it makes many SSH connections, in order to do things such as copy over files and run commands. Each time Ansible makes a new SSH connection to a host, it has to pay this negotiation penalty.
+
+OpenSSH is the most common implementation of SSH and is almost certainly the SSH client you have installed on your local machine if you are on Linux or macOS.((("OpenSSH")))((("ControlPersist", id="ix_CtrlPer"))) OpenSSH supports an optimization called _SSH multiplexing_, which is also referred to as _ControlPersist_. When you use SSH multiplexing, multiple SSH sessions to the same host will share the same TCP connection, so the TCP connection negotiation happens only the first time.
+
+[role="pagebreak-before"]
+When you enable multiplexing:
+
+* The first time you try to SSH to a host, OpenSSH starts a master connection.
+* OpenSSH creates a Unix domain socket (known as the _control socket_) that is associated with the remote host.((("control socket")))
+* The next time you try to SSH to a host, OpenSSH will use the control socket to communicate with the host instead of making a new TCP connection.
+
+The master connection stays open for a user-configurable amount of time, and then the
+SSH client will terminate the connection. Ansible uses a default of 60
+seconds.
+
+
+==== Manually Enabling SSH Multiplexing
+
+Ansible automatically enables SSH multiplexing, but to give you a
+sense of what's going on behind the scenes, let's work through the steps of manually enabling SSH multiplexing and using it to SSH to a remote machine.((("SSH multiplexing and ControlPersist", "manually enabling SSH multiplexing")))
+
+<<ssh_config_example>> shows an entry in the _~/.ssh/config_ file
+for _myserver.example.com_, which is configured to use SSH multiplexing.
+
+[[ssh_config_example]]
+.ssh/config for enabling ssh multiplexing
+====
+----
+Host myserver.example.com
+  ControlMaster auto
+  ControlPath /tmp/%r@%h:%p
+  ControlPersist 10m
+
+----
+====
+
+The +ControlMaster auto+ line enables SSH multiplexing, and it tells SSH to create the master connection and the control socket if it does not exist yet.
+
+The +ControlPath /tmp/%r@%h:%p+ line tells SSH where to put the control Unix domain socket file on the filesystem. +%h+ is the target hostname, +%r+ is the remote login username, and +%p+ is the port. If we SSH as the Ubuntu user:
+[source,console]
+----
+$ ssh ubuntu@myserver.example.com
+----
+
+then SSH will create the control socket at __/tmp/ubuntu@myserver.example.com:22__ the first time you SSH to the server.
+
+The +ControlPersist 10m+ line tells SSH to close the master connection if there have been no SSH connections for 10 minutes.
+
+You can check whether a master connection ((("ssh -O check command")))is open by using the +-O check+ flag:
+[source,console]
+----
+$ ssh -O check ubuntu@myserver.example.com
+----
+
+[role="pagebreak-before"]
+It will return output like this if the control master is running:
+
+----
+Master running (pid=4388)
+----
+
+Here's what the control master process looks like if you use +ps 4388+:
+
+----
+ PID   TT  STAT      TIME COMMAND
+4388   ??  Ss     0:00.00 ssh: /tmp/ubuntu@myserver.example.com:22 [mux]
+
+----
+
+You can also terminate the master ((("ssh -O exit command")))connection by using the +-O exit+ flag, like this:
+[source,console]
+----
+$ ssh -O exit ubuntu@myserver.example.com
+----
+
+You can see more details about these settings on the _ssh_config_ man page.
+
+I tested out the speed of((("timing (performance), speed of making SSH connection"))) making an SSH connection like this:
+[source,console]
+----
+$ time ssh ubuntu@myserver.example.com /bin/true
+----
+
+This times how long it takes to initiate an SSH connection to the server and run the _/bin/true_ program, which simply exits with a 0 return code.
+
+The first time I ran it, the timing part of the output looked like
+this:footnote:[The output format may look different, depending on your shell and OS. I'm running Zsh on macOS.]
+
+----
+0.01s user 0.01s system 2% cpu 0.913 total
+----
+
+The time we really care about is the total time: +0.913 total+. This tells us it took 0.913 seconds to execute the whole command. (Total time is also sometimes((("wall-clock time"))) called _wall-clock time_, since it's how much time elapsed if we were measuring the time on the clock on the wall.)
+
+The second time, the output looked like this:
+
+----
+0.00s user 0.00s system 8% cpu 0.063 total
+----
+
+The total time went down to 0.063s, for a savings of about 0.85s for each SSH
+connection after the first one. Recall that Ansible uses at least two SSH
+sessions to execute each task: one session to copy the module file to the host,
+and another session to execute the module file.footnote:[One of these steps can be optimized away by using pipelining, described later in this chapter.] This means that SSH multiplexing should save you on the order of one or two seconds for each task that runs in your playbook.
+
+==== SSH Multiplexing Options in Ansible
+
+[role="pagebreak-after"]
+Ansible uses the options for SSH((("SSH multiplexing and ControlPersist", "SSH multiplexing options in Ansible"))) multiplexing shown in <<SSH_MULTIPLEXING>>.
+
+[[SSH_MULTIPLEXING]]
+.Ansible's SSH multiplexing options
+[options="header"]
+|=======================================================
+|Option         |Value
+|ControlMaster  | auto
+|ControlPath    | $HOME/.ansible/cp/ansible-ssh-%h-%p-%r
+|ControlPersist | 60s
+|=======================================================
+
+I've never needed to change Ansible's default +ControlMaster+ or +ControlPersist+ values.((("ControlMaster")))((("ControlPersist", "Ansible SSH multiplexing option"))) However, I have needed to change the value for the +ControlPath+ option. ((("ControlPath")))That's because the operating system sets a maximum length on the path of a Unix domain socket, and if the +ControlPath+ string is too long, then multiplexing won't work.  Unfortunately, Ansible won't tell you if the +ControlPath+ string is too long; it will simply run without using SSH multiplexing.
+
+You can test it out on your control machine by manually trying to SSH by using the same +ControlPath+ that Ansible would use:
+[source,console]
+----
+$ CP=~/.ansible/cp/ansible-ssh-%h-%p-%r
+$ ssh -o ControlMaster=auto -o ControlPersist=60s \
+-o ControlPath=$CP \
+ubuntu@ec2-203-0-113-12.compute-1.amazonaws.com \
+/bin/true
+----
+
+If the +ControlPath+ is too long, you'll see an ((("ControlPath", "too long, error caused by")))error that looks like
+<<CONTROLPATH_TOO_LONG>>.
+
+[[CONTROLPATH_TOO_LONG]]
+.ControlPath too long
+====
+----
+ControlPath
+"/Users/lorin/.ansible/cp/ansible-ssh-ec2-203-0-113-12.compute-1.amazonaws.
+com-22-ubuntu.KIwEKEsRzCKFABch"
+too long for Unix domain socket
+----
+====
+
+This is a common occurrence when connecting to Amazon EC2 instances, because EC2 uses long hostnames.((("Amazon EC2", "ControlPath too long errors")))
+
+The workaround is to configure Ansible to use a shorter +ControlPath+. The http://bit.ly/2kKpsJI[official documentation] recommends setting ((("ControlPath", "setting control_path in ansible.config to shorter time")))this option in your _ansible.cfg_ file:
+[source,ini]
+----
+[ssh_connection]
+control_path = %(directory)s/%%h-%%r
+----
+
+Ansible sets +%(directory)s+ to +$HOME/.ansible/cp+, and the double
+percent signs (+%%+) are needed to escape these characters because percent signs
+are special characters for files in _.ini_ format.(((".ini file format", "percent sign (%) as special character", primary-sortas="ini file format")))((("% (percent sign), special character in .ini files")))
+
+[WARNING]
+====
+If you have SSH multiplexing enabled, and you change a configuration of your SSH connection, say by modifying the +ssh_args+ configuration option, this change won't take effect if the control socket is still open from a previous connection.((("ssh_args configuration option")))((("ControlPersist", startref="ix_CtrlPer")))((("SSH multiplexing and ControlPersist", startref="ix_SSHmul")))((("performance, making Ansible faster", "SSH multiplexing and ControlPersist", startref="ix_perfSSHmul")))
+
+
+====
+
+=== Pipelining
+
+Recall how Ansible executes ((("performance, making Ansible faster", "pipelining", id="ix_perfpipe")))((("pipelining", id="ix_pipe")))a task:
+
+. It generates a Python script based on the module being invoked.
+. It copies the Python script to the host.
+. It executes the Python script.
+
+Ansible supports an optimization called _pipelining_, whereby it will execute the Python script by piping it to the SSH session instead of copying it. This saves time because it tells Ansible to use one SSH session instead of two.
+
+==== Enabling Pipelining
+
+Pipelining is off by default because it can require some configuration on your
+remote hosts, but I like to enable it because it speeds up execution.((("pipelining", "enabling in ansible.config file"))) To enable
+it, modify your _ansible.cfg_ file as shown in <<enable_pipelining>>.
+
+[[enable_pipelining]]
+.ansible.cfg Enable pipelining
+====
+[source,ini]
+----
+[defaults]
+pipelining = True
+----
+====
+
+////
+http://docs.ansible.com/intro_configuration.html#pipelining
+TODO: Do a speed analysis here with pipelining
+////
+
+
+==== Configuring Hosts for Pipelining
+
+For pipelining to work, you need to make sure that +requiretty+ is not enabled in your _/etc/sudoers_ file on your hosts.((("requiretty option, disabling")))((("pipelining", "configuring hosts for")))((("hosts", "configuring for pipelining"))) Otherwise, you'll get errors that look like <<REQUIRETTY_ERROR>> when you run your playbook.
+
+[[REQUIRETTY_ERROR]]
+.Error when requiretty is enabled
+====
+----
+failed: [vagrant1] => {"failed": true, "parsed": false}
+invalid output was: sudo: sorry, you must have a tty to run sudo
+----
+====
+
+If +sudo+ on your hosts is configured to read files from the _/etc/sudoers.d_, then the simplest way to resolve this is to add a _sudoers_ config file that disables the +requiretty+ restriction for the user you use SSH with.((("sudo utility", "sudoers config file disabling requiretty restriction")))
+
+If the _/etc/sudoers.d_ directory is present, your hosts should support
+adding _sudoers_ config files in that directory. You can use the +ansible+
+command-line tool to check if the directory there:
+[source,console]
+----
+$ ansible vagrant -a "file /etc/sudoers.d"
+----
+
+If the directory is present, the output will look like this:
+
+----
+vagrant1 | success | rc=0 >>
+/etc/sudoers.d: directory
+
+vagrant3 | success | rc=0 >>
+/etc/sudoers.d: directory
+
+vagrant2 | success | rc=0 >>
+/etc/sudoers.d: directory
+----
+
+If the directory is not present, the output will look like this:
+
+----
+vagrant3 | FAILED | rc=1 >>
+/etc/sudoers.d: ERROR: cannot open `/etc/sudoers.d' (No such file or
+directory)
+
+vagrant2 | FAILED | rc=1 >>
+/etc/sudoers.d: ERROR: cannot open `/etc/sudoers.d' (No such file or
+directory)
+
+vagrant1 | FAILED | rc=1 >>
+/etc/sudoers.d: ERROR: cannot open `/etc/sudoers.d' (No such file or
+directory)
+
+----
+
+If the directory is present, create a template file that looks like
+<<SUDOERS_TEMPLATE>>.
+
+[[SUDOERS_TEMPLATE]]
+.templates/disable-requiretty.j2
+====
+----
+Defaults:{{ ansible_user }} !requiretty
+
+----
+====
+
+Then run the playbook shown in <<REQUIRETTY_PLAYBOOK>>, replacing +myhosts+ with your hosts. Don't forget to disable pipelining before you do this, or the playbook will fail with an error.
+
+[[REQUIRETTY_PLAYBOOK]]
+.disable-requiretty.yml
+====
+[source,yaml+jinja]
+----
+- name: do not require tty for ssh-ing user
+  hosts: myhosts
+  sudo: True
+  tasks:
+    - name: Set a sudoers file to disable tty
+      template: >
+        src=templates/disable-requiretty.j2
+        dest=/etc/sudoers.d/disable-requiretty
+        owner=root group=root mode=0440
+        validate="visudo -cf %s"
+
+----
+====
+
+Note the use of +validate="visudo -cf %s"+. See <<validating_files_sidebar>> for
+a discussion of why it's a good idea to use validation when modifying _sudoers_ files.((("validation", "using when modifying sudoers files")))
+
+////
+That tells the template module to check the syntax
+of the generated file using the _visudo_ program. If the syntax check fails,
+then no file will created be at _/etc/sudoers.d/disable-requiretty_. Validation
+is especially important when modifying sudoers files, since a bad sudoers file
+can prevent you from invoking sudo.
+////
+
+=== Fact Caching
+
+If your play doesn't reference any Ansible facts, you can
+turn off fact gathering for that play.((("performance, making Ansible faster", "pipelining", startref="ix_perfpipe")))((("pipelining", startref="ix_pipe"))) Recall that you can disable fact gathering with the +gather_facts+ clause in a play;((("caching", "fact caching", id="ix_cachefact")))((("gather_facts clause")))((("performance, making Ansible faster", "fact caching", id="ix_perffact")))((("facts", "caching", id="ix_factcache"))) for example:
+[source,yaml+jinja]
+----
+- name: an example play that doesn't need facts
+  hosts: myhosts
+  gather_facts: False
+  tasks:
+    # tasks go here:
+----
+
+You can disable fact gathering by default((("gathering configuration option", "setting to explicit"))) by adding the following to your _ansible.cfg_ file:
+[source,ini]
+----
+[defaults]
+gathering = explicit
+----
+
+
+If you write plays that do reference facts, you can use fact
+caching so that Ansible gathers facts for a host only once, even if you rerun the playbook or run a different playbook that connects to the same host.
+
+If fact caching is enabled, Ansible will store facts in a cache the first time it connects to hosts. For subsequent playbook runs, Ansible will look up the facts in the cache instead of fetching them from the remote host, until the cache expires.
+
+<<enabling_fact_caching>> shows the lines you must add to your _ansible.cfg_ file to enable fact caching. The +fact_caching_timeout+ value is in seconds, and the example uses a 24-hour (86,400 second) timeout.((("facts", "caching", "enabling")))((("fact_caching_timeout value")))
+
+[WARNING]
+====
+As with all caching-based solutions, there's always the danger of the cached data becoming stale.((("facts", "caching", "making sure data is not stale"))) Some facts, such as the CPU architecture (stored in the `ansible_architecture` fact), are unlikely to change often. Others, such as the date and time reported by the machine (stored in the `ansible_date_time` fact), are guaranteed to change often.
+
+If you decide to enable fact caching, make sure you know how quickly the facts used in your playbook are likely to change, and
+set an appropriate fact-caching timeout value.((("ansible-playbook --flush-cache command"))) If you want to clear the fact cache before running a playbook, pass the +--flush-cache+ flag to
+`ansible-playbook`.
+====
+
+[[enabling_fact_caching]]
+.ansible.cfg enable fact caching
+====
+[source,ini]
+----
+[defaults]
+gathering = smart
+# 24-hour timeout, adjust if needed
+fact_caching_timeout = 86400
+
+# You must specify a fact caching implementation
+fact_caching = ...
+----
+====
+
+Setting the +gathering+ configuration option to +smart+ in _ansible.cfg_ tells Ansible to use _smart gathering_. ((("gathering configuration option", "setting to smart")))((("smart gathering")))This means that Ansible will gather facts only if they are not present in
+the cache or if the cache has expired.
+
+[NOTE]
+====
+If you want to use fact caching, make sure your playbooks do _not_
+explicitly specify +gather_facts: True+ or +gather_facts: False+. With smart gathering enabled in the configuration file, Ansible will gather facts only if they are not present in the cache.((("gather_facts clause", "smart gathering and")))
+====
+
+You must explicitly specify a +fact_caching+ implementation in _ansible.cfg_, or Ansible will((("facts", "caching", "fact_caching implementation"))) not cache facts between playbook runs. As of this writing, there are three fact-caching implementations:
+
+* JSON files
+* Redis
+* Memcached
+
+
+==== JSON File Fact-Caching Backend
+
+With the JSON file fact-caching backend, Ansible will write the facts it gathers to files on your control machine.((("facts", "caching", "JSON file fact-caching backend")))((("JSON", "fact-caching backend"))) If the files are present on your system, it will use those files instead of connecting to the host and gathering facts.
+
+To enable the JSON file fact-caching backend, add the settings in <<json_fact_caching>> to your _ansible.cfg_ file.
+
+[[json_fact_caching]]
+.ansible.cfg with JSON fact caching
+====
+[source,ini]
+----
+[defaults]
+gathering = smart
+
+# 24-hour timeout, adjust if needed
+fact_caching_timeout = 86400
+
+
+# JSON file implementation
+fact_caching = jsonfile
+fact_caching_connection = /tmp/ansible_fact_cache
+----
+====
+
+Use the +fact_caching_connection+ configuration option to specify a directory where Ansible should write the JSON files that contain the facts.((("fact_caching_connection option"))) If the directory does not exist, Ansible will create it.
+
+Ansible uses the file modification time to determine whether the fact-caching timeout has occurred yet.
+
+==== Redis Fact-Caching Backend
+
+Redis is a popular key-value data store that is often used as a cache.((("Redis", "fact-caching backend")))((("facts", "caching", "Redis fact-caching backend"))) To enable fact caching by using the Redis backend, you need to do the following:
+
+. Install Redis on your control machine.
+. Ensure that the Redis service is running on the control machine.
+. Install the Python Redis package.
+. Modify _ansible.cfg_ to enable fact caching with Redis.
+
+
+<<redis_fact_checking>> shows how to configure _ansible.cfg_ to use Redis as the cache backend.
+
+
+[[redis_fact_checking]]
+.ansible.cfg with Redis fact caching
+====
+[source,ini]
+----
+[defaults]
+gathering = smart
+
+# 24-hour timeout, adjust if needed
+fact_caching_timeout = 86400
+
+fact_caching = redis
+
+----
+====
+
+Ansible needs the Python Redis package on the control machine,((("Python", "redis package"))) which you can install using
+pip:footnote:[You may need to +sudo+ or activate a virtualenv, depending on how you
+installed Ansible on your control machine.]
+
+----
+$ pip install redis
+----
+
+You must also install Redis and ensure that it is running on your control
+machine. If you are using macOS, you can install Redis by using Homebrew. If you are
+using Linux, install Redis by using your native package manager.
+
+==== Memcached Fact-Caching Backend
+
+Memcached is another popular key-value data store that is often used as a cache.((("Memcached fact-caching backend")))((("facts", "caching", "Memcached fact-caching backend"))) To enable fact caching by using the Memcached backend, you need to do the following:
+
+. Install Memcached on your control machine.
+. Ensure that the Memcached service is running on the control machine.
+. Install the Python Memcached Python package.
+. Modify _ansible.cfg_ to enable fact caching with Memcached.
+
+
+<<memcached_fact_checking>> shows how to configure _ansible.cfg_ to use Memcached as the cache backend.
+
+[[memcached_fact_checking]]
+.ansible.cfg with Memcached fact caching
+====
+[source,ini]
+----
+[defaults]
+gathering = smart
+
+# 24-hour timeout, adjust if needed
+fact_caching_timeout = 86400
+
+fact_caching = memcached
+----
+====
+
+Ansible needs the Python Memcached package on the control machine, which you can install using pip.((("Python", "Memcached package, installing"))) You might need to +sudo+ or activate a virtualenv, depending on how you installed Ansible on your control machine.
+[source,console]
+----
+$ pip install python-memcached
+----
+
+You must also install Memcached and ensure that it is running on your control
+machine. If you are using macOS, you can install Memcached by using Homebrew. If you are
+using Linux, install Memcached by using your native package manager.
+
+
+For more information on fact caching, check out the http://bit.ly/1F6BHap[official documentation].((("caching", "fact caching", startref="ix_cachefact")))((("performance, making Ansible faster", "fact caching", startref="ix_perffact")))((("facts", "caching", startref="ix_factcache")))
+
+
+=== Parallelism
+
+For each task, Ansible will connect to the hosts in parallel to execute the tasks.((("performance, making Ansible faster", "parallelism")))((("parallelism"))) But Ansible doesn't necessarily connect to _all_ of the hosts in parallel. Instead, the level of parallelism is controlled by a parameter, which defaults to 5. You can change this default parameter in one of two ways.((("ANSIBLE_FORKS environment variable")))
+
+You can set the +ANSIBLE_FORKS+ environment variable, as shown in <<ANSIBLE_FORKS>>.
+
+[[ANSIBLE_FORKS]]
+.Setting ANSIBLE_FORKS
+====
+[source,console]
+----
+$ export ANSIBLE_FORKS=20
+$ ansible-playbook playbook.yml
+----
+====
+
+You also can modify the Ansible configuration file (_ansible.cfg_) by setting a +forks+ option in ((("forks option")))the defaults section, as shown in <<FORKS_CONFIG>>.
+
+[[FORKS_CONFIG]]
+.ansible.cfg configuring number of forks
+====
+[source,ini]
+----
+[defaults]
+forks = 20
+----
+====
+
+
+=== Concurrent Tasks with Async
+
+Ansible introduced support for asynchronous actions with the `async` clause to work around the problem of
+SSH timeouts.((("tasks", "concurrent, using async clause")))((("async clause, concurrent tasks with")))((("concurrent tasks with async")))((("performance, making Ansible faster", "concurrent tasks with async"))) If the execution time for a task exceeds the SSH timeout,
+Ansible will lose its connection to the host and report an error. Marking a long-running task with the +async+ clause eliminates the risk of an SSH timeout.
+
+However, asynchronous actions can also be used for a different purpose: to start
+a second task before the first task has completed. This can be useful if you
+have two tasks that both take a long time to execute and are independent (i.e., you don't need the first to complete
+to execute the second).
+
+<<async_example>> shows a list of tasks that use the +async+ clause to
+clone a large Git repository. Because the task is marked as +async+, Ansible will not wait until the Git clone is complete before it begins to install the operating
+system packages.
+
+[[async_example]]
+.Using async to overlap tasks
+====
+[source,yaml+jinja]
+----
+- name: install git
+  apt: name=git update_cache=yes
+  become: yes
+- name: clone Linus's git repo
+  git:
+    repo: git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+    dest: /home/vagrant/linux
+  async: 3600  <1>
+  poll: 0 <2>
+  register: linux_clone <3>
+- name: install several packages
+  apt:
+    name: "{{ item }}"
+  with_items:
+    - apt-transport-https
+    - ca-certificates
+    - linux-image-extra-virtual
+    - software-properties-common
+    - python-pip
+  become: yes
+- name: wait for linux clone to complete
+  async_status: <4>
+    jid: "{{ linux_clone.ansible_job_id }}" <5>
+  register: result
+  until: result.finished <6>
+  retries: 3600
+----
+====
+
+<1> We specify that this is an +async+ task that should take less than 3,600 seconds. If the execution time exceeds this value, Ansible will automatically terminate the process associated with the task.
+<2> We specify a poll argument of 0 to tell Ansible that it should immediately
+    move on to the next task after it spawns this task asynchronously. If we had specified a nonzero value instead,
+    Ansible would not move on to the next task. Instead, it would periodically
+    poll the status of the +async+ task to check whether it was complete, sleeping between checks for
+    the amount of time in seconds specified by the poll argument.
+<3> When we run +async+, we must use the +register+ clause to capture the +async+ result. The +result+ object
+    contains an +ansible_job_id+ value that we will use later to poll for the job status.
+<4> We use the +async_status+ module to poll for the status of the +async+ job we started earlier.
+<5> We must specify a +jid+ value that identifies the +async+ job.
+<6> The +async_status+ module polls only a single time. We need to specify an +until+ clause so that it will
+    keep polling until the job completes, or until we exhaust the specified number of retries.
+
+You should now know how to configure SSH multiplexing, pipelining, fact caching, parallelism, and async in order to get your playbooks to run more quickly. Next, we'll discuss writing your own Ansible modules.((("performance, making Ansible faster", startref="ix_perf")))

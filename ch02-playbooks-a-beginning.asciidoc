@@ -1,0 +1,1040 @@
+[[playbooks_a_beginning]]
+== Playbooks: A Beginning
+
+Most of your time in Ansible will be spent writing playbooks. A _playbook_ is
+the term that Ansible uses for a configuration management script. ((("playbooks", id="ix_playbk")))Let's look at
+an example: installing the Nginx web server and configuring it for secure
+communication.
+
+If you're following along in this chapter, you should end up with the files listed here:
+
+* _playbooks/ansible.cfg_
+* _playbooks/hosts_
+* _playbooks/Vagrantfile_
+* _playbooks/web-notls.yml_
+* _playbooks/web-tls.yml_
+* _playbooks/files/nginx.key_
+* _playbooks/files/nginx.crt_
+* _playbooks/files/nginx.conf_
+* _playbooks/templates/index.html.j2_
+* _playbooks/templates/nginx.conf.j2_
+
+=== Some Preliminaries
+
+Before we can run this playbook against our Vagrant machine, we need
+to expose ports 80 and 443, so we can access them. ((("Nginx", "configuring host to run", "exposing ports on Vagrant machine")))((("Vagrant", "exposing ports on")))As shown in
+<<vagrant_ports_figure>>, we are going to configure Vagrant so that requests to
+ports 8080 and 8443 on our local machine are forwarded to ports 80 and 443 on
+the Vagrant machine. This will allow us to access the web server running inside Vagrant at
+http://localhost:8080 and https://localhost:8443.
+
+[[vagrant_ports_figure]]
+.Exposing ports on Vagrant machine
+image::images/aur2_0201.png["Vagrant port forwarding"]
+
+
+Modify your _Vagrantfile_ so it looks like this:
+
+[source,ruby]
+----
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.box = "ubuntu/trusty64"
+  config.vm.network "forwarded_port", guest: 80, host: 8080
+  config.vm.network "forwarded_port", guest: 443, host: 8443
+end
+----
+
+This maps port 8080 on your local machine to port 80 of the Vagrant machine, and
+port 8443 on your local machine to port 443 on the Vagrant machine. After you
+make the changes, tell Vagrant to have them go into effect by running this command:
+
+[source,console]
+----
+$ vagrant reload
+----
+
+You should see output that includes the following:
+
+----
+==> default: Forwarding ports...
+    default: 80 => 8080 (adapter 1)
+    default: 443 => 8443 (adapter 1)
+    default: 22 => 2222 (adapter 1)
+----
+
+
+=== A Very Simple Playbook
+
+For our first example playbook, we'll configure a host to run an Nginx web
+server.((("Nginx", "configuring host to run", id="ix_Nginxconf")))((("playbooks", "simple example, configuring host to run Nginx", id="ix_playbksimex"))) For this example, we won't configure the web server to support TLS encryption. This will make setting up
+the web server simpler. However, a proper website should have Transport Layer Security (TLS) encryption
+enabled, and we'll cover how to do that later in this chapter.
+
+[role="pagebreak-before less_space"]
+.TLS versus SSL
+****
+You might be familiar with the term _SSL_ rather than _TLS_ in the context of secure web servers.((("SSL (Secure Sockets Layer)", seealso="TLS")))((("TLS (Transport Layer Security)"))) SSL is an older protocol that was used to secure communications between browsers and web servers, and it has been superseded by a newer protocol named TLS. Although many continue to use the term _SSL_ to refer to the current secure protocol, in this book, I use the more accurate _TLS_.
+****
+
+First, we'll see what happens when we run the playbook in <<WEB_NOTLS_PLAYBOOK>>, and then we'll go over the contents of the playbook in detail.
+
+[[WEB_NOTLS_PLAYBOOK]]
+.web-notls.yml
+====
+----
+include::playbooks/web-notls.yml[]
+----
+====
+
+
+
+
+////
+Harmonize this with the boolean discussion
+////
+
+[[YAML_TRUTHY]]
+.Why Do You Use _True_ in One Place and _Yes_ in Another?
+****
+Sharp-eyed readers might have noticed that <<WEB_NOTLS_PLAYBOOK>> uses +True+ in
+one spot in the playbook (to enable +sudo+) and +yes+ in another spot in the
+playbook (to update the apt cache).
+
+Ansible is pretty flexible in how you represent truthy and falsey values in
+playbooks.((("truthy and falsey values in playbooks"))) Strictly speaking, module arguments (for example, +update_cache=yes+) are treated
+differently from values elsewhere in playbooks (for example, +sudo: True+). Values elsewhere
+are handled by the YAML parser and so use the YAML conventions of truthiness:
+
+
+YAML truthy:: +true+, +True+, +TRUE+, +yes+, +Yes+, +YES+, +on+, +On+, +ON+, +y+, +Y+
+YAML falsey:: +false+, +False+, +FALSE+, +no+, +No+, +NO+, +off+, +Off+, +OFF+, +n+, +N+
+
+
+////
+TODO: Check if Ansible does case-insensitive checks for this
+////
+Module arguments are passed as strings and use Ansible's internal
+conventions:
+
+module arg truthy:: +yes+, +on+, +1+, +true+
+module arg falsey:: +no+, +off+, +0+, +false+
+
+I tend to follow the examples in the official Ansible documentation. These
+typically use +yes+ and +no+ when passing arguments to modules (since that's
+consistent with the module documentation), and +True+ and +False+ elsewhere in
+playbooks.
+****
+
+==== Specifying an Nginx Config File
+
+This playbook requires two additional files before we can run it. First, we need
+to define an Nginx configuration file.((("playbooks", "simple example, configuring host to run Nginx", "specifying Nginx config file")))((("Nginx", "configuring host to run", "specifying config file")))
+
+Nginx ships with a configuration file that works out of the box if you just want
+to serve static files. But you'll almost always need to customize this, so we'll
+overwrite the default configuration file with our own as part
+of this playbook. As you'll see later, we'll need to modify this configuration
+file to support TLS. <<NGINX_CONF_NOTLS>> shows a basic Nginx config file.  Put it in
+_playbooks/files/nginx.conf_.footnote:[Note that while we call this file _nginx.conf_, it replaces the _sites-enabled/default_ Nginx server block config file, not the main _/etc/nginx.conf_ config file.]
+
+[NOTE]
+====
+An Ansible convention is to keep files in a subdirectory named _files_, and
+Jinja2 templates in a subdirectory named _templates_. I follow this
+convention throughout the book.((("templates subdirectory")))((("files subdirectory")))
+====
+
+[[NGINX_CONF_NOTLS]]
+.files/nginx.conf
+====
+[source,nginx]
+----
+include::playbooks/files/nginx.conf[]
+----
+====
+
+==== Creating a Custom Home Page
+
+Let's add a custom home page. We're going to use Ansible's template functionality
+so that Ansible will generate the file from a template.((("templates", "home page")))((("playbooks", "simple example, configuring host to run Nginx", "creating custom home page"))) Put the content shown in
+<<HOME_PAGE_TEMPLATE>> in _playbooks/templates/index.html.j2_.
+
+
+[[HOME_PAGE_TEMPLATE]]
+.playbooks/templates/index.html.j2
+====
+[source,html]
+----
+<html>
+  <head>
+    <title>Welcome to ansible</title>
+  </head>
+  <body>
+  <h1>nginx, configured by Ansible</h1>
+  <p>If you can see this, Ansible successfully installed nginx.</p>
+
+  <p>{{ ansible_managed }}</p>
+  </body>
+</html>
+
+----
+====
+
+This template references a special Ansible variable named `ansible_managed`.
+When Ansible renders this template,((("ansible_managed variable"))) it will replace this variable with
+information about when the template file was generated.
+<<web_page_screenshot>> shows a web browser displaying the
+generated HTML.
+
+[[web_page_screenshot]]
+.Rendered HTML
+image::images/aur2_0202.png["Welcome page"]
+
+==== Creating a Webservers Group
+
+Let's create a `webservers` group in our inventory file so that we can refer to
+this group in our playbook. ((("webservers group, creating")))((("Nginx", "configuring host to run", "creating webservers group")))((("playbooks", "simple example, configuring host to run Nginx", "creating webservers group")))For now, this group will contain our test server.
+
+Inventory files are in the _.ini_ file format. We'll go into this format in detail later in the book. Edit your _playbooks/hosts_ file to put a +[webservers]+ line above the +testserver+ line, as shown in <<example-2-5>>. This indicates that +testserver+ is in the +webservers+ group.
+
+[[example-2-5]]
+.playbooks/hosts
+====
+----
+[webservers]
+testserver ansible_host=127.0.0.1 ansible_port=2222
+----
+====
+
+You should now be able to ping the +webservers+ group((("ping module, invoking", "pinging webservers group"))) by using the +ansible+
+command-line tool:
+[source,console]
+----
+$ ansible webservers -m ping
+----
+
+The output should look like this:
+
+----
+testserver | success >> {
+    "changed": false,
+    "ping": "pong"
+}
+----
+
+=== Running the Playbook
+
+The +ansible-playbook+ command executes playbooks.((("playbooks", "simple example, configuring host to run Nginx", "running the playbook", startref="ix_playbkrun")))((("ansible-playbook command"))) To run the playbook, use this command:
+[source,console]
+----
+$ ansible-playbook web-notls.yml
+----
+
+<<output_ansible_playbook>> shows what the output should look like.
+
+[[output_ansible_playbook]]
+.Output of ansible-playbook
+====
+----
+PLAY [Configure webserver with nginx] *********************************
+
+GATHERING FACTS ***************************************************************
+ok: [testserver]
+
+TASK: [install nginx] *********************************************************
+changed: [testserver]
+
+TASK: [copy nginx config file] ************************************************
+changed: [testserver]
+
+TASK: [enable configuration] **************************************************
+ok: [testserver]
+
+TASK: [copy index.html] *******************************************************
+changed: [testserver]
+
+TASK: [restart nginx] *********************************************************
+changed: [testserver]
+
+PLAY RECAP ********************************************************************
+testserver                 : ok=6    changed=4    unreachable=0    failed=0
+----
+====
+
+.Cowsay
+****
+If you have the _cowsay_ program installed on your local machine, ((("cowsay program, disabling")))Ansible output will look like this instead:
+
+----
+ _______________________________________
+< PLAY [Configure webserver with nginx] >
+ ---------------------------------------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+
+----
+
+If you((("ANSIBLE_NOCOWS environment variable"))) don't want to see the cows, you can disable cowsay by
+setting the pass:[<span class="keep-together"><code>ANSIBLE_NOCOWS</code></span>] environment variable like this:
+[source,console]
+----
+$ export ANSIBLE_NOCOWS=1
+----
+
+You can also disable cowsay by adding the following to your _ansible.cfg_ file:
+
+----
+[defaults]
+nocows = 1
+----
+****
+
+If you didn't get any errors,footnote:[If you encountered an error, you might want to skip to <<DEBUGGING>> for assistance on debugging.] you should be able to point
+your browser to http://localhost:8080 and see the custom HTML page, as shown in
+<<web_page_screenshot>>.
+
+[TIP]
+====
+If your playbook file is marked as executable((("shebangs")))((("#! (shebang), lines beginning with"))) and starts with a line that looks like
+this:footnote:[Colloquially referred to as a _shebang_.]
+
+----
+#!/usr/bin/env ansible-playbook
+----
+
+then you can execute it by invoking it directly, like this:
+[source,console]
+----
+$ ./web-notls.yml
+----
+====
+
+
+=== Playbooks Are YAML
+
+Ansible playbooks are written in YAML syntax. _YAML_ is a file format similar in((("playbooks", "simple example, configuring host to run Nginx", "running the playbook", startref="ix_playbkrun")))((("Nginx", "configuring host to run", startref="ix_Nginxconf")))((("playbooks", "simple example, configuring host to run Nginx", startref="ix_playbksimex")))
+intent to JSON, but generally easier for humans to read and write. Before we go
+over the playbook, let's cover the concepts of YAML that are
+most important for writing playbooks.((("YAML", id="ix_YAML")))((("playbooks", "YAML syntax", id="ix_playbkYAML")))
+
+==== Start of File
+
+YAML files are supposed to start with three dashes to ((("YAML", "start of file")))((("start of file (YAML)")))indicate the beginning of
+the document:
+[source,yaml]
+----
+include::three-dashes.yml[]
+----
+
+However, if you forget to put those three dashes at the top of your playbook
+files, Ansible won't complain.
+
+
+==== Comments
+
+Comments start with a number sign and apply to the end of the line, the same as in((("comments in YAML")))((("YAML", "comments")))
+shell scripts, Python, and Ruby:
+[source,yaml+jinja]
+----
+# This is a YAML comment
+----
+
+==== Strings
+
+In general, YAML strings don't have to be quoted, although you can quote them if
+you prefer.((("strings", "in YAML")))((("YAML", "strings"))) Even if there are spaces, you don't need to quote them. For example,
+this is a string in YAML:
+[source,yaml+jinja]
+----
+this is a lovely sentence
+----
+
+The JSON equivalent is as follows:
+[source,yaml+jinja]
+----
+"this is a lovely sentence"
+----
+
+In some scenarios in Ansible, you will need to quote strings. These typically involve the use of +{{ braces }}+ for variable substitution. We'll get to those later.((("{{ }} (braces notation)", "variable substitution")))
+
+==== Booleans
+
+YAML has a native Boolean type, and provides you with a wide variety of strings((("Boolean type in YAML")))((("YAML", "Boolean type")))
+that can be interpreted as true or false, which we covered in <<YAML_TRUTHY>>. Personally, I always use +True+ and +False+ in my Ansible playbooks.
+
+For example, this is a Boolean in YAML:
+[source,yaml+jinja]
+----
+True
+----
+
+The JSON equivalent is this:
+[source,json]
+----
+true
+----
+
+
+==== Lists
+
+YAML lists are like arrays in JSON and Ruby, or lists in Python.((("YAML", "lists (or sequences)")))((("sequences in YAML")))((("lists", "in YAML"))) Technically,
+these are called _sequences_ in YAML, but I call them _lists_ here to be
+consistent with the official Ansible documentation.
+
+They are delimited with hyphens, like this:
+[source,yaml+jinja]
+----
+- My Fair Lady
+- Oklahoma
+- The Pirates of Penzance
+----
+
+The JSON equivalent is shown here:
+[source,json]
+----
+[
+  "My Fair Lady",
+  "Oklahoma",
+  "The Pirates of Penzance"
+]
+----
+
+(Note again that we don't have to quote the strings in YAML, even though they have spaces in them.)
+
+YAML also supports an((("inline lists format (YAML)"))) inline format for lists, which looks like this:
+
+----
+[My Fair Lady, Oklahoma, The Pirates of Penzance]
+----
+
+
+==== Dictionaries
+
+YAML _dictionaries_ are like objects in JSON, dictionaries in Python, or hashes in
+Ruby.((("dictionaries", "YAML")))((("YAML", "dictionaries"))) Technically, these are called _mappings_ in YAML, but I call them
+_dictionaries_ here to be consistent with the official Ansible documentation.
+
+They look like this:
+[source,yaml+jinja]
+----
+address: 742 Evergreen Terrace
+city: Springfield
+state: North Takoma
+----
+
+The JSON equivalent is shown here:
+[source,json]
+----
+{
+  "address": "742 Evergreen Terrace",
+  "city": "Springfield",
+  "state": "North Takoma"
+}
+----
+
+YAML also supports an inline format for dictionaries, which looks like this:
+
+----
+{address: 742 Evergreen Terrace, city: Springfield, state: North Takoma}
+----
+
+[[line_folding]]
+==== Line Folding
+
+When writing playbooks, you'll often encounter situations where you're passing
+many arguments to a module.((("YAML", "line folding"))) For aesthetics, you might want to break this up across
+multiple lines in your file, but you want Ansible to treat the string as if it
+were a single line.
+
+You can do this with YAML by using line folding with the greater than (+>+)
+character.((("&gt;, line folding in YAML")))((("line folding in YAML"))) The YAML parser will replace line breaks with spaces. For example:
+[source,yaml+jinja]
+----
+address: >
+    Department of Computer Science,
+    A.V. Williams Building,
+    University of Maryland
+city: College Park
+state: Maryland
+----
+
+The JSON equivalent is as follows:
+
+////
+TODO: Verify that this line fits in the book, and also that there's no \n
+at the end of the address string, which is what the yamltojson tells me.
+////
+[source,json]
+----
+{
+  "address": "Department of Computer Science, A.V. Williams Building,
+              University of Maryland",
+  "city": "College Park",
+  "state": "Maryland"
+}
+----
+
+
+=== Anatomy of a Playbook
+
+Let's take a look at our playbook from the perspective of a YAML file.((("YAML", startref="ix_YAML")))((("playbooks", "YAML syntax", startref="ix_playbkYAML")))((("playbooks", "anatomy of", id="ix_playbkanat"))) Here it is again, in <<example2-7>>.
+
+[[example2-7]]
+.web-notls.yml
+====
+[source,yaml+jinja]
+----
+include::playbooks/web-notls.yml[]
+----
+====
+
+In <<example2-8>>, we see the JSON equivalent of this file.
+
+[[example2-8]]
+.JSON equivalent of web-notls.yml
+====
+[source,json]
+----
+include::playbooks/web-notls.json[]
+----
+====
+
+
+[NOTE]
+====
+A valid JSON file is also a valid YAML file.((("JSON", "valid file")))((("YAML", "valid file, JSON and"))) This is because YAML allows strings to be quoted, considers +true+ and +false+ to be valid Booleans, and has inline lists and dictionary syntaxes that are the same as JSON arrays and objects. But don't write your playbooks as JSON—the whole point of YAML is that it's easier for people to read.
+====
+
+==== Plays
+
+Looking at either the YAML or JSON representation, it should be clear that a
+playbook is a list of dictionaries.((("playbooks", "anatomy of", "plays"))) Specifically, a playbook is a list of
+_plays_.((("plays")))
+
+Here's the playfootnote:[Actually, it's a list that contains a single play.] from our example:
+[source,yaml+jinja]
+----
+- name: Configure webserver with nginx
+  hosts: webservers
+  become: True
+  tasks:
+    - name: install nginx
+      apt: name=nginx update_cache=yes
+
+    - name: copy nginx config file
+      copy: src=files/nginx.conf dest=/etc/nginx/sites-available/default
+
+    - name: enable configuration
+      file: >
+        dest=/etc/nginx/sites-enabled/default
+        src=/etc/nginx/sites-available/default
+        state=link
+
+    - name: copy index.html
+      template: src=templates/index.html.j2
+               dest=/usr/share/nginx/html/index.html mode=0644
+
+
+    - name: restart nginx
+      service: name=nginx state=restarted
+----
+
+Every play must contain the following:
+
+* A set of _hosts_ to configure
+* A list of _tasks_ to be executed on those hosts
+
+Think of a play as the thing that connects hosts to tasks.((("hosts", "in plays")))((("tasks", "in plays")))
+
+In addition to specifying hosts and tasks, plays also support optional settings. We'll get into those later, but here are three common ones:
+
++name+::
+    A comment that describes what the play is about. Ansible prints this out
+when the play starts to run.((("name setting (in plays)")))
+
++become+::
+    If true, Ansible will run every task by becoming (by default) the root
+user.((("become setting (in plays)")))((("root user"))) This is useful when managing Ubuntu servers, since by default you cannot SSH as the root user.
+
++vars+::
+    A list of variables and values.((("variables", "vars setting in plays"))) You'll see this in action later in this
+chapter.
+
+==== Tasks
+
+Our example playbook contains one play that has five tasks.((("tasks", "in example playbook")))((("playbooks", "anatomy of", "tasks"))) Here's the first
+task of that play:
+[source,yaml+jinja]
+----
+- name: install nginx
+  apt: name=nginx update_cache=yes
+----
+
+
+The +name+ is optional, so it's perfectly ((("names", "name setting for tasks")))valid to write a task like this:
+[source,yaml+jinja]
+----
+- apt: name=nginx update_cache=yes
+----
+
+////
+TODO: Check if you need to name a task to invoke it with start-at-task
+////
+Even though names are optional, I recommend you use them because they serve as good reminders for the intent of the task. (Names will be very useful when somebody else is trying to understand your playbook, including yourself in six months.) As you've seen, Ansible will print out the name of a task when it runs. Finally, as you'll see in
+<<DEBUGGING>>, you can use the +--start-at-task <task name>+ flag to tell `ansible-playbook` to start a playbook in the middle of a play, but you need to reference the task by name.
+
+Every task must contain a key with the name of a module and a value with the
+arguments to that module.((("modules", "name and arguments in tasks")))((("apt module", "and arguments in a task"))) In the preceding example, the module name is `apt` and the
+arguments are +name=nginx update_cache=yes+.
+
+These arguments tell the +apt+ module to install the package named _nginx_ and to
+update the package cache (the equivalent of doing an +apt-get update+) before
+installing the package.
+
+It's important to understand that, from the point of the view of the YAML parser used by the Ansible frontend, the arguments are treated as a string, not as a dictionary.((("YAML", "line folding", "for module name and arguments in playbook tasks"))) This means that if you want to break arguments into multiple lines, you need to use the YAML folding syntax, like this:
+[source,yaml+jinja]
+----
+- name: install nginx
+  apt: >
+      name=nginx
+      update_cache=yes
+----
+
+Ansible also supports a task syntax that will let you specify module arguments as
+a YAML dictionary, which is helpful when using modules that support complex
+pass:[<span class="keep-together">arguments</span>]. We'll cover that in <<COMPLEX_ARGS>>.
+
+Ansible also supports an older syntax that uses +action+ as the key and puts the name of the module in the value. The preceding example also can be written as follows:
+[source,yaml+jinja]
+----
+- name: install nginx
+  action: apt name=nginx update_cache=yes
+----
+
+==== Modules
+
+_Modules_ are scripts that come packaged with Ansible and perform some kind of action on a host.footnote:[The modules that ship with Ansible all are written in Python, but modules can be written in any language.] Admittedly, that's a pretty generic description, but there's enormous variety across Ansible modules.((("modules")))((("playbooks", "anatomy of", "modules"))) The modules we use in this chapter are as follows:
+
++apt+:: Installs or removes packages by using the apt package manager
++copy+:: Copies a file from local machine to the hosts
++file+:: Sets the attribute of a file, symlink, or directory
++service+:: Starts, stops, or restarts a service
++template+:: Generates a file from a template and copies it to the hosts
+
+
+.Viewing Ansible Module Documentation
+****
+Ansible ships with the +ansible-doc+ command-line tool, which shows documentation about modules.((("modules", "documentation for")))((("documentation", "for Ansible modules")))((("ansible-doc command-line tool"))) Think of it as man pages for Ansible modules. For example, to show the documentation for the `service` module, run this:
+[source,console]
+----
+$ ansible-doc service
+----
+
+If you use macOS, there's a wonderful documentation viewer called
+http://kapeli.com/dash[Dash] that has support for Ansible. Dash indexes all of the Ansible module documentation.((("Dash")))((("macOS", "Dash documentation viewer"))) It's a commercial tool ($24.99 as of this writing), but I find it invaluable.
+
+****
+
+
+Recall from the first chapter that Ansible executes a task on a host by
+generating a custom script based on the module name and arguments, and then copies this script to the host and runs it.
+
+More than 200 modules ship with Ansible, and this number grows with every release. You can also find third-party Ansible modules out there, or write your own.
+
+==== Putting It All Together
+
+To sum up, a playbook contains one or more plays. A play associates an unordered set of hosts with an ordered list of tasks. Each task is associated with exactly one module.((("playbooks", "anatomy of", "summary of contents")))
+
+<<erd_figure>> is an entity-relationship diagram that depicts this
+relationship between playbooks, plays, hosts, tasks, and modules.
+
+
+[[erd_figure]]
+.Entity-relationship diagram
+image::images/aur2_0203.png["Ansible entities"]
+
+
+=== Did Anything Change? Tracking Host State
+
+When you run `ansible-playbook`, Ansible outputs status information for each task it executes in the play.((("playbooks", "tracking host state")))((("hosts", "tracking host state")))
+
+Looking back at <<output_ansible_playbook>>, notice that the status for some of the tasks is `changed`, and the status for some others is `ok`. For example, the +install nginx+ task ((("tasks", "changed status")))has status `changed`, which appears as yellow on my terminal:
+
+----
+TASK: [install nginx] *********************************************************
+changed: [testserver]
+----
+
+The +enable configuration+, on the other hand,((("tasks", "ok status"))) has status `ok`, which appears as green on my terminal:
+
+----
+TASK: [enable configuration] **************************************************
+ok: [testserver]
+----
+
+Any Ansible task that runs has the potential to change the state of the host in
+some way. Ansible modules will first check to see whether the state of the host needs
+to be changed before taking any action. If the state of the host matches the
+arguments of the module, Ansible takes no action on the host and responds
+with a state of `ok`.
+
+On the other hand, if there is a difference between the state of the host and
+the arguments to the module, Ansible will change the state of the host and
+return `changed`.
+
+In the example output just shown, the `install nginx` task was changed,
+which meant that before I ran the playbook, the _nginx_ package had not
+previously been installed on the host.  The `enable configuration` task was
+unchanged, which meant that there was already a configuration file on the
+server that was identical to the file I was copying over. The reason for this is
+that the _nginx.conf_ file I used in my playbook is the same as the _nginx.conf_
+file that gets installed by the _nginx_ package on Ubuntu.
+
+As you'll see later in this chapter, Ansible's detection of state change can
+be used to trigger additional actions through the use of _handlers_.((("handlers"))) But, even
+without using handlers, it is still a useful form of feedback to see whether
+your hosts are changing state as the playbook runs.((("playbooks", "anatomy of", startref="ix_playbkanat")))
+
+
+=== Getting Fancier: TLS Support
+
+Let's move on to a more complex example: we're going to modify the previous playbook so that our web servers support TLS.((("TLS (Transport Layer Security)", id="ix_TLS")))((("playbooks", "modifying simple example to add TLS support", id="ix_playbkTLS"))) The new features here are as follows:
+
+* Variables
+* Handlers
+
+<<WEB_TLS_PLAYBOOK>> shows what our playbook looks like with TLS support.
+
+[[WEB_TLS_PLAYBOOK]]
+.web-tls.yml
+====
+[source,yaml+jinja]
+----
+include::playbooks/web-tls.yml[]
+----
+====
+
+
+==== Generating a TLS Certificate
+
+We need to manually generate a TLS certificate. ((("TLS (Transport Layer Security)", "generating a TLS certificate")))((("certificates", "generating a TLS certificate")))In a
+production environment, you'd purchase your TLS certificate from a certificate
+authority, or use a free service such as Let's Encrypt, which Ansible supports via
+the +letsencrypt+ module. We'll use a self-signed certificate, since we can generate those for
+free.
+
+Create a _files_ subdirectory of your _playbooks_ directory, and then generate the TLS certificate and key:
+[source,console]
+----
+$ mkdir files
+$ openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+    -subj /CN=localhost \
+    -keyout files/nginx.key -out files/nginx.crt
+----
+
+This should generate the files _nginx.key_ and _nginx.crt_ in the _files_
+directory. The certificate has an expiration date of 10 years (3,650 days) from the day you created it.
+
+==== Variables
+
+The play in our playbook now has a section called `vars`:
+[source,yaml+jinja]
+----
+vars:
+  key_file: /etc/nginx/ssl/nginx.key
+  cert_file: /etc/nginx/ssl/nginx.crt
+  conf_file: /etc/nginx/sites-available/default
+  server_name: localhost
+----
+
+This section defines four ((("variables", "in playbook with TLS support")))variables and assigns a value to each variable.
+
+In our example, each value is a string (e.g., +/etc/nginx/ssl/nginx.key+),
+but any valid YAML can be used as the value of a variable. You can use lists
+and dictionaries in addition to strings and Booleans.
+
+Variables can be used in tasks, as well as in template files.((("tasks", "variables in"))) You reference
+variables by using the +{{ braces }}+ notation. ((("{{ }} (braces notation)", "referencing variables")))Ansible replaces these braces
+with the value of the variable.
+
+Consider this task in the playbook:
+[source,yaml+jinja]
+----
+- name: copy TLS key
+  copy: src=files/nginx.key dest={{ key_file }} owner=root mode=0600
+----
+
+
+Ansible will substitute +{{ key_file }}+ with +/etc/nginx/ssl/nginx.key+ when it
+executes this task.
+
+.When Quoting Is Necessary
+****
+If you reference a variable right after specifying the module, the YAML parser will misinterpret the variable reference as the beginning of an inline dictionary.((("strings", "quoting in arguments"))) Consider the following example:
+[source,yaml+jinja]
+----
+- name: perform some task
+  command: {{ myapp }} -a foo
+----
+
+Ansible will try to parse the first part of +{{ myapp }} -a foo+ as a dictionary
+instead of a string, and will return an error. In this case, you must quote the
+arguments:
+[source,yaml+jinja]
+----
+- name: perform some task
+  command: "{{ myapp }} -a foo"
+----
+
+A similar problem arises if your argument contains a colon. For example:
+[source,yaml+jinja]
+----
+- name: show a debug message
+  debug: msg="The debug module will print a message: neat, eh?"
+----
+
+The colon in the +msg+ argument trips up the YAML parser. To get around this, you need to quote the entire argument string.
+
+Unfortunately, just quoting the argument string won't resolve the problem, either:
+[source,yaml+jinja]
+----
+- name: show a debug message
+  debug: "msg=The debug module will print a message: neat, eh?"
+----
+
+This will make the YAML parser happy, but the output isn't what you expect:
+
+----
+TASK: [show a debug message] ************************************************
+ok: [localhost] => {
+    "msg": "The"
+}
+----
+
+The +debug+ module's `msg` argument requires a quoted string to capture the
+spaces.((("debug module", "msg argument, requiring quoted string"))) In this particular case, we need to quote both the whole argument string
+and the `msg` argument. Ansible supports alternating single and double quotes,
+so you can do this:
+
+[source,yaml+jinja]
+----
+- name: show a debug message
+  debug: "msg='The debug module will print a message: neat, eh?'"
+----
+
+This yields the expected output:
+
+----
+TASK: [show a debug message] ************************************************
+ok: [localhost] => {
+    "msg": "The debug module will print a message: neat, eh?"
+}
+----
+
+Ansible is pretty good at generating meaningful error messages if you forget to
+put quotes in the right places and end up with invalid YAML.
+****
+
+==== Generating the Nginx Configuration Template
+
+If you've done web programming, you've likely used a template system to generate
+HTML.((("configuration files", "generating template for Nginx configuration")))((("templates", "generating for Nginx configuration"))) In case you haven't, a _template_ is just a text file that has special
+syntax for specifying variables that should be replaced by values. If you've
+ever received an automated email from a company, it's probably using an email
+template, as shown in <<example2-10>>.
+
+[[example2-10]]
+.An email template
+====
+[source,jinja]
+----
+Dear {{ name }},
+
+You have {{ num_comments }} new comments on your blog: {{ blog_name }}.
+----
+====
+
+
+Ansible's use case isn't HTML pages or emails—it's configuration files. You
+don't want to hand-edit configuration files if you can avoid it. This is
+especially true if you have to reuse the same bits of configuration data (say,
+the IP address of your queue server or your database credentials) across
+multiple configuration files. It's much better to take the info that's
+specific to your deployment, record it in one location, and then
+generate all of the files that need this information from templates.
+
+Ansible uses the Jinja2 template engine to implement templating. If you've ever
+used a templating library such as Mustache, ERB, or the Django template system, Jinja2 will
+feel very familiar.((("Jinja2 template engine", "generating template for Nginx configuration")))
+
+Nginx's configuration file needs information about where to find the TLS
+key and certificate. We're going to use Ansible's templating functionality to
+define this configuration file so that we can avoid hardcoding values that
+might change.
+
+In your _playbooks_ directory, create a _templates_ subdirectory and create the
+file _templates/nginx.conf.j2_, as shown in <<NGINX_CONF_TEMPLATE>>.
+
+[[NGINX_CONF_TEMPLATE]]
+.templates/nginx.conf.j2
+====
+[source,nginx]
+----
+include::playbooks/templates/nginx.conf.j2[]
+----
+====
+
+We use the +.j2+ extension to indicate that the file is a Jinja2 template.(((".j2 file extension", primary-sortas="j2 file extension")))
+However, you can use a different extension if you like; Ansible doesn't care.
+
+In our template, we reference three variables:
+
++server_name+:: The hostname of the web server (e.g., +www.example.com+)
++cert_file+:: The path to the TLS certificate
++key_file+:: The path to the TLS private key
+
+We define these variables in the playbook.
+
+Ansible also uses the Jinja2 template engine to evaluate variables in playbooks.((("variables", "evaluating in playbooks with Jinja2")))
+Recall that we saw the +{{ conf_file }}+ syntax in the playbook itself.
+
+
+[NOTE]
+=====================================================================
+Early versions of Ansible used a dollar sign (+$+) to do variable interpolation in
+playbooks instead of the braces. You used to dereference the variable _foo_ by
+writing +$foo+, whereas now you write +{{ foo }}+. The dollar sign syntax has been
+deprecated; if you encounter it in an example playbook you find on the internet,
+then you're looking at older Ansible code.
+=====================================================================
+
+
+You can use all of the Jinja2 features in your templates, but we won't cover them in detail here. Check out the http://jinja.pocoo.org/docs/dev/templates/[Jinja2 Template Designer Documentation] for more details.((("Jinja2 template engine", "Template Designer Documentation"))) You probably won't need to use those advanced templating features, though. One Jinja2 feature you probably will use with Ansible is filters; we'll cover those in a later
+chapter.
+
+==== Handlers
+
+Looking back at our _web-tls.yml_ playbook, note that there are two new playbook elements we haven't
+discussed yet.((("handlers", "in playbook for Nginx TLS support"))) There's a +handlers+ section that looks like this:
+[source,yaml+jinja]
+----
+handlers:
+- name: restart nginx
+  service: name=nginx state=restarted
+----
+
+In addition, several of the tasks contain a +notify+ key. ((("tasks", "notify key")))((("notify key in tasks")))For example:
+[source,yaml+jinja]
+----
+- name: copy TLS key
+  copy: src=files/nginx.key dest={{ key_file }} owner=root mode=0600
+  notify: restart nginx
+----
+
+Handlers are one of the conditional forms that Ansible supports. A handler is
+similar to a task, but it runs only if it has been notified by a task. A task
+will fire the notification if Ansible recognizes that the task has changed the
+state of the system.
+
+////
+TODO: Talk about system state changes here
+////
+
+
+A task notifies a handler by passing the handler's name as the argument. In the preceding example, the handler's name is +restart nginx+. For an Nginx server, we'd need to
+restart it if any of the following happens:footnote:[Alternatively, we could reload the configuration file by using +state=reloaded+ instead of restarting the service.]
+
+ * The TLS key changes.
+ * The TLS certificate changes.
+ * The configuration file changes.
+ * The contents of the _sites-enabled_ directory change.
+
+We put a +notify+ statement on each of the tasks to ensure that Ansible restarts
+Nginx if any of these conditions are met.
+
+===== A few things to keep in mind about handlers
+
+Handlers usually run after all of the tasks are run at the end of the play. They run only once, even
+if they are notified multiple times. If a play contains multiple handlers, the
+handlers always run in the order that they are defined in the +handlers+ section,
+not the notification order.
+
+The official Ansible docs mention that the only common uses for handlers are
+for restarting services and for reboots. Personally, I've always used them only for restarting services.((("handlers", "uses for"))) Even then, it's a pretty small optimization, since we
+can always just unconditionally restart the service at the end of the playbook
+instead of notifying it on change, and restarting a service doesn't usually take
+very long.
+
+Another pitfall with handlers that I've encountered is that they can be troublesome when debugging a playbook. It goes something like this:
+
+. I run a playbook.
+. One of my tasks with a `notify` on it changes state.
+. An error occurs on a subsequent task, stopping Ansible.
+. I fix the error in my playbook.
+. I run Ansible again.
+. None of the tasks report a state change the second time around, so Ansible doesn't run the handler.
+
+Read more about advanced handler usages and applications in <<handlers_advanced>>.
+
+==== Running the Playbook
+
+As before, we use the +ansible-playbook+ command to run ((("TLS (Transport Layer Security)", "playbook with TLS support for Nginx, running")))the playbook:
+[source,console]
+----
+$ ansible-playbook web-tls.yml
+----
+
+The output should look something like this:
+
+----
+PLAY [Configure webserver with nginx and tls] *********************************
+
+GATHERING FACTS ***************************************************************
+ok: [testserver]
+
+TASK: [Install nginx] *********************************************************
+changed: [testserver]
+
+TASK: [create directories for tls certificates] *******************************
+changed: [testserver]
+
+TASK: [copy TLS key] **********************************************************
+changed: [testserver]
+
+TASK: [copy TLS certificate] **************************************************
+changed: [testserver]
+
+TASK: [copy nginx config file] ************************************************
+changed: [testserver]
+
+TASK: [enable configuration] **************************************************
+ok: [testserver]
+
+NOTIFIED: [restart nginx] *****************************************************
+changed: [testserver]
+
+PLAY RECAP ********************************************************************
+testserver                 : ok=8    changed=6    unreachable=0    failed=0
+----
+
+Point your browser to pass:[<em>https://localhost:8443</em>] (don't forget the _s_ on _https_). If you're using Chrome, as I am, you'll get a ghastly message that says something like, "Your connection is not private" (see <<chrome_error>>).((("Chrome, and self-signed TLS certificates")))
+
+[[chrome_error]]
+.Browsers such as Chrome don't trust self-signed TLS certificates
+image::images/aur2_0204.png["Scary error message"]
+
+Don't worry, though; that error is expected, as we generated a self-signed TLS certificate, and web
+browsers such as Chrome trust only certificates that have been issued from a proper
+authority.
+
+
+We covered a lot of the _what_ of Ansible in this chapter, describing what
+Ansible will do to your hosts. The handlers we discussed here are just one form
+of control flow that Ansible supports. In a later chapter, we'll see iteration
+and conditionally running tasks based on the values of variables. In the next chapter, we'll talk about the _who_; in other words, how to describe the hosts that
+your playbooks will run against.((("TLS (Transport Layer Security)", startref="ix_TLS")))((("playbooks", "modifying simple example to add TLS support", startref="ix_playbkTLS")))((("playbooks", startref="ix_playbk")))

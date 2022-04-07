@@ -1,0 +1,758 @@
+[[variables_and_facts]]
+== Variables and Facts
+
+Ansible is not a full-fledged programming language, but it does have several
+programming language features, and one of the most important of these is
+variable substitution.((("variables", id="ix_vars")))  This chapter presents Ansible's support for variables in
+more detail, including a certain type of variable that Ansible calls a _fact_.
+
+=== Defining Variables in Playbooks
+
+The simplest way to define variables is to put a +vars+ section in your playbook with the names and values of variables.((("variables", "defining in playbooks")))((("playbooks", "defining variables in"))) Recall from <<WEB_TLS_PLAYBOOK>> that we used this approach to define several configuration-related variables, like this:
+[source,yaml+jinja]
+----
+vars:
+  key_file: /etc/nginx/ssl/nginx.key
+  cert_file: /etc/nginx/ssl/nginx.crt
+  conf_file: /etc/nginx/sites-available/default
+  server_name: localhost
+----
+
+Ansible also allows you to put variables into one or more files, using a section called +vars_files+.((("vars_files"))) Let's say we want to take the preceding example and put the variables in a file named _nginx.yml_ instead of putting them right in the playbook. We would replace the +vars+ section with a +vars_files+ that looks like this:
+[source,yaml+jinja]
+----
+vars_files:
+ - nginx.yml
+----
+
+The _nginx.yml_ file would look like <<nginx_vars_example>>.
+
+[role="pagebreak-before"]
+[[nginx_vars_example]]
+.nginx.yml
+====
+[source,yaml+jinja]
+----
+key_file: /etc/nginx/ssl/nginx.key
+cert_file: /etc/nginx/ssl/nginx.crt
+conf_file: /etc/nginx/sites-available/default
+server_name: localhost
+----
+====
+
+You'll see an example of +vars_files+ in action in <<deploying_mezzanine>> when
+we use it to separate out the variables that contain sensitive information.
+
+As we discussed in <<inventory>>, Ansible also lets you define variables
+associated with hosts or groups in the inventory file or in separate files
+that live alongside the inventory file.
+
+=== Viewing the Values of Variables
+
+For debugging, it's often handy to be able to view the output of a variable.((("variables", "viewing values of"))) You
+saw in <<playbooks_a_beginning>> how to use the +debug+ module to print
+out an arbitrary message.((("debug module", "outputting value of variables"))) We can also use it to output the value of the variable.
+It works like this:
+[source,yaml+jinja]
+----
+- debug: var=myvarname
+----
+
+We'll be using this form of the +debug+ module several times in this chapter.
+
+=== Registering Variables
+
+Often, you'll find that you need to set the value of a variable based on the
+result of a task.((("variables", "registering", id="ix_varsreg"))) To do so, we create a _registered
+variable_ using the +register+
+clause when invoking a module.  <<capture_output>> shows how to capture
+the output of the `whoami` command to a variable named `login`.((("whoami command, capturing output to a variable")))((("commands", "output of, capturing to a variable")))
+
+[[capture_output]]
+.Capturing the output of a command to a variable
+====
+[source,yaml+jinja]
+----
+- name: capture output of whoami command
+  command: whoami
+  register: login
+
+----
+====
+
+In order to use the `login` variable later, we need to know the type of value to expect.
+The value of a variable set using the +register+ clause is always a dictionary,
+but the specific keys of the dictionary are different, depending on the module
+that was invoked.((("register clause")))((("dictionaries", "value of variables set using register")))
+
+Unfortunately, the official Ansible module documentation doesn't contain
+information about what the return values look like for each module. The module docs do often contain
+examples that use the +register+ clause, which can be helpful. I've found the
+simplest way to find out what a module returns is to register a variable and then output
+that variable with the +debug+ module.((("modules", "registered as variable, outputting returns with debug")))((("debug module", "module registered as variable, outputting returns")))
+
+Let's say we run the playbook shown in <<whoami_example>>.
+
+[[whoami_example]]
+.whoami.yml
+====
+[source,yaml+jinja]
+----
+- name: show return value of command module
+  hosts: server1
+  tasks:
+    - name: capture output of id command
+      command: id -un
+      register: login
+    - debug: var=login
+
+----
+====
+
+The output of the +debug+ module looks like this:
+
+----
+TASK: [debug var=login] *******************************************************
+ok: [server1] => {
+    "login": {
+        "changed": true, <1>
+        "cmd": [ <2>
+            "id",
+            "-un"
+        ],
+        "delta": "0:00:00.002180",
+        "end": "2015-01-11 15:57:19.193699",
+        "invocation": {
+            "module_args": "id -un",
+            "module_name": "command"
+        },
+        "rc": 0, <3>
+        "start": "2015-01-11 15:57:19.191519",
+        "stderr": "", <4>
+        "stdout": "vagrant", <5>
+        "stdout_lines": [ <6>
+            "vagrant"
+        ],
+        "warnings": []
+    }
+}
+
+----
+
+<1> The +changed+ key is present in the return value of all Ansible modules, and Ansible uses it to determine whether a state change has occurred.((("shell module", "changed key")))((("command module", "changed key"))) For the +command+ and +shell+ module, this will always be set to +true+ unless overridden with the +changed_when+ clause, which we cover in <<more_on_playbooks_a>>.
+<2> The +cmd+ key contains the invoked command as a list of strings. 
+<3> The +rc+ key contains the return code. If it is nonzero, Ansible will assume the task failed to execute. 
+<4> The +stderr+ key contains any text written to standard error, as a single string. 
+<5> The +stdout+ key contains any text written to standard out, as a single string.
+<6> The +stdout_lines+ key contains any text written to split by newline. It is a list, and each element of the list is a line of output.
+
+
+If you're using the +register+ clause with the +command+ module,((("command module", "using output in a task")))((("tasks", "using command module output in")))((("stdout key", "using register clause with command module"))) you'll likely want access to the +stdout+ key, as shown in <<using_output_command_task>>.
+
+
+[[using_output_command_task]]
+.Using the output of a command in a task
+====
+[source,yaml+jinja]
+----
+- name: capture output of id command
+  command: id -un
+  register: login
+- debug: msg="Logged in as user {{ login.stdout }}"
+
+----
+====
+
+Sometimes it's useful to do something with the output of a failed task.((("tasks", "failed"))) However,
+if pass:[<span class="keep-together">the task fails</span>], Ansible will stop executing tasks for the failed host.
+We can use the +ignore_errors+ clause, as shown in <<example4-5>>, so Ansible does not stop on the error.((("errors", "ignoring for failed tasks")))((("ignore_errors clause")))
+
+[[example4-5]]
+.Ignoring when a module returns an error
+====
+[source,yaml+jinja]
+----
+- name: Run myprog
+  command: /opt/myprog
+  register: result
+  ignore_errors: True
+- debug: var=result
+
+----
+====
+
+
+The +shell+ module ((("shell module", "output structure")))has the same output structure as the +command+ module, but other modules contain different keys. <<apt_package_not_present>> shows the output of the +apt+ module when installing a package that wasn't present before.((("apt module", "output when installing a new package")))
+
+
+[[apt_package_not_present]]
+.Output of apt module when installing a new package
+====
+----
+ok: [server1] => {
+    "result": {
+        "changed": true,
+        "invocation": {
+            "module_args": "name=nginx",
+            "module_name": "apt"
+        },
+        "stderr": "",
+        "stdout": "Reading package lists...\nBuilding dependency tree...",
+        "stdout_lines": [
+            "Reading package lists...",
+            "Building dependency tree...",
+            "Reading state information...",
+            "Preparing to unpack .../nginx-common_1.4.6-1ubuntu3.1_all.deb ...",
+            ...
+            "Setting up nginx-core (1.4.6-1ubuntu3.1) ...",
+            "Setting up nginx (1.4.6-1ubuntu3.1) ...",
+            "Processing triggers for libc-bin (2.19-0ubuntu6.3) ..."
+        ]
+    }
+}
+
+----
+====
+
+.Accessing Dictionary Keys in a Variable
+****
+
+If a variable contains a dictionary, you can access the keys
+of the dictionary by using either a dot (.) or a subscript ([]).((("[] (subscript) notation")))(((". (dot) notation, accessing dictionary keys in a variable")))((("dictionaries", "in variables, accessing dictionary keys"))) <<using_output_command_task>> has a variable reference that uses dot
+notation:
+
+----
+{{ login.stdout }}
+----
+
+We could have used subscript notation instead:
+
+----
+{{ login['stdout'] }}
+----
+
+This rule applies to multiple ((("variables", "dereferencing")))dereferences, so all of the following are equivalent:
+
+----
+ansible_eth1['ipv4']['address']
+ansible_eth1['ipv4'].address
+ansible_eth1.ipv4['address']
+ansible_eth1.ipv4.address
+----
+
+I generally prefer dot notation, unless the key is a string that
+contains a character that's not allowed as a variable name, such as a dot, space, or hyphen.
+
+Ansible uses((("Jinja2 template engine", "variable dereferencing with"))) Jinja2 to implement variable dereferencing, so for more details on this topic, see the http://jinja.pocoo.org/docs/dev/templates/#variables[Jinja2 documentation on variables].
+
+****
+
+<<apt_already_present>> shows the output of the +apt+ module when((("apt module", "output when a package is already present on a host"))) the package is already present on the host.
+
+
+[[apt_already_present]]
+.Output of apt module when package already present
+====
+----
+ok: [server1] => {
+    "result": {
+        "changed": false,
+        "invocation": {
+            "module_args": "name=nginx",
+            "module_name": "apt"
+        }
+    }
+}
+----
+====
+
+
+Note that the +stdout+, +stderr+, and +stdout_lines+ keys are present in the output only when the package was not previously installed.((("stdout key", "in apt module output")))((("stderr key, in apt module output")))((("stdout_lines key in apt module output")))
+
+[CAUTION]
+====
+If your playbooks use registered variables, make sure you know the content of
+those variables, both for cases where the module changes the host's state and for
+when the module doesn't change the host's state.((("playbooks", "registered variables in"))) Otherwise, your playbook might
+fail when it tries to access a key in a registered variable that doesn't
+exist.((("variables", "registering", startref="ix_varsreg")))
+
+====
+
+
+=== Facts
+
+As you've already seen, when Ansible runs a playbook, before the first task runs,
+this((("variables", "facts", id="ix_varsfact")))((("facts", id="ix_fact"))) happens:
+
+----
+GATHERING FACTS **************************************************
+ok: [servername]
+----
+
+When Ansible gathers facts, it connects to the host and queries it for all
+kinds of details about the host: CPU architecture, operating system, IP
+addresses, memory info, disk info, and more. This information is stored in
+variables that are called _facts_, and they behave just like any other variable.
+
+Here's a simple playbook that prints out((("facts", "playbook printing out operating system of each server"))) the operating system of each server:
+[source,yaml+jinja]
+----
+- name: print out operating system
+  hosts: all
+  gather_facts: True
+  tasks:
+  - debug: var=ansible_distribution
+----
+
+Here's what the output looks like for servers running Ubuntu and CentOS:
+
+----
+PLAY [print out operating system] *********************************************
+
+GATHERING FACTS ***************************************************************
+ok: [server1]
+ok: [server2]
+
+TASK: [debug var=ansible_distribution] ****************************************
+ok: [server1] => {
+    "ansible_distribution": "Ubuntu"
+}
+ok: [server2] => {
+    "ansible_distribution": "CentOS"
+}
+
+PLAY RECAP ********************************************************************
+server1                    : ok=2    changed=0    unreachable=0    failed=0
+server2                    : ok=2    changed=0    unreachable=0    failed=0
+----
+
+You can consult the http://bit.ly/1G9pVfx[official Ansible documentation]
+for a list of some of the available facts.((("facts", "Ansible documentation for"))) I maintain a more comprehensive list of facts on http://bit.ly/1G9pX7a[GitHub].((("GitHub repositories", "list of facts")))
+
+
+==== Viewing All Facts Associated with a Server
+
+Ansible implements fact collecting through the use of a special module called
+the +setup+ module.((("setup module")))((("facts", "viewing all facts associated with a server"))) You don't need to call this module in your playbooks because
+Ansible does that automatically when it gathers facts. However, if you invoke it
+manually with the +ansible+ command-line tool, like this:
+[source,console]
+----
+$ ansible server1 -m setup
+----
+
+then Ansible will output all of the facts,((("setup module", "facts output by"))) as shown in <<setup_module_output>>.
+
+[[setup_module_output]]
+.Output of setup module
+====
+----
+server1 | success >> {
+    "ansible_facts": {
+        "ansible_all_ipv4_addresses": [
+            "10.0.2.15",
+            "192.168.4.10"
+        ],
+        "ansible_all_ipv6_addresses": [
+            "fe80::a00:27ff:fefe:1e4d",
+            "fe80::a00:27ff:fe67:bbf3"
+        ],
+(many more facts)
+----
+====
+
+Note that the returned value is a dictionary whose key is +ansible_facts+ and
+whose value is a dictionary that contains the name and value of the actual
+facts.((("ansible_facts key")))((("dictionaries", "facts returned by setup module")))
+
+==== Viewing a Subset of Facts
+
+Because Ansible collects many facts, the +setup+ module supports a +filter+ parameter that ((("filter parameter, setup module")))((("facts", "viewing a subset of")))lets you filter by fact name by specifying a
+glob.footnote:[A _glob_ is what shells use to match file patterns (e.g., +*.txt+).] For example:
+
+[source,console]
+----
+$ ansible web -m setup -a 'filter=ansible_eth*'
+----
+
+The output looks like this:
+
+----
+web | success >> {
+    "ansible_facts": {
+        "ansible_eth0": {
+            "active": true,
+            "device": "eth0",
+            "ipv4": {
+                "address": "10.0.2.15",
+                "netmask": "255.255.255.0",
+                "network": "10.0.2.0"
+            },
+            "ipv6": [
+                {
+                    "address": "fe80::a00:27ff:fefe:1e4d",
+                    "prefix": "64",
+                    "scope": "link"
+                }
+            ],
+            "macaddress": "08:00:27:fe:1e:4d",
+            "module": "e1000",
+            "mtu": 1500,
+            "promisc": false,
+            "type": "ether"
+        },
+        "ansible_eth1": {
+            "active": true,
+            "device": "eth1",
+            "ipv4": {
+                "address": "192.168.33.10",
+                "netmask": "255.255.255.0",
+                "network": "192.168.33.0"
+            },
+            "ipv6": [
+                {
+                    "address": "fe80::a00:27ff:fe23:ae8e",
+                    "prefix": "64",
+                    "scope": "link"
+                }
+            ],
+            "macaddress": "08:00:27:23:ae:8e",
+            "module": "e1000",
+            "mtu": 1500,
+            "promisc": false,
+            "type": "ether"
+        }
+    },
+    "changed": false
+}
+
+----
+
+
+==== Any Module Can Return Facts
+
+If you look closely at <<setup_module_output>>, you'll see that the output is a dictionary whose key is +ansible_facts+.  ((("modules", "returning facts")))((("facts", "return by any module")))((("ansible_facts key")))The use of +ansible_facts+ in the return value is an Ansible idiom. If a module returns a dictionary that contains +ansible_facts+ as a key, Ansible will create variable names in the environment with those values and associate them with the active host.
+
+For modules that return facts, there's no need to register variables, since Ansible creates these variables for you automatically.((("Amazon EC2", "ec2_facts module")))((("ec2_facts module"))) For example, the following tasks use the +ec2_facts+ module to retrieve Amazon EC2footnote:[We'll cover Amazon EC2 in more detail in <<cloud>>.] facts about a server and then print out the instance ID:
+[source,yaml+jinja]
+----
+- name: get ec2 facts
+  ec2_facts:
+
+- debug: var=ansible_ec2_instance_id
+----
+
+The output looks like this.
+
+----
+TASK: [debug var=ansible_ec2_instance_id] *************************************
+ok: [myserver] => {
+    "ansible_ec2_instance_id": "i-a3a2f866"
+}
+----
+
+Note that we do not need to use the +register+ keyword when invoking
++ec2_facts+, since the returned values are facts. ((("register clause", "and modules with facts for returned values"))) Several modules ship with Ansible that return facts. You'll see another one of them, the +docker+
+module, in <<ch_docker>>.
+
+==== Local Facts
+
+Ansible provides an additional mechanism for associating facts with a host.
+You can place one or more files on the remote host machine in the
+_/etc/ansible/facts.d_ directory.((("local facts")))((("facts", "local"))) Ansible will recognize the file if it's any of
+the following:
+
+* In _.ini_ format
+* In JSON format
+* An executable that takes no arguments and outputs JSON on standard out
+
+These facts are available as keys of a special variable named +ansible_local+.((("ansible_local variable")))
+
+For instance, <<local_fact>> shows a fact file in _.ini_ format.(((".ini file format", "facts file in", primary-sortas="ini file format")))
+[[local_fact]]
+./etc/ansible/facts.d/example.fact
+====
+----
+[book]
+title=Ansible: Up and Running
+author=Lorin Hochstein
+publisher=O'Reilly Media
+
+----
+====
+
+If we copy this file to _/etc/ansible/facts.d/example.fact_ on the remote host, we can access the contents of the +ansible_local+ variable((("playbooks", "accessing contents of ansible_local variable"))) in a playbook:
+[source,yaml+jinja]
+----
+- name: print ansible_local
+  debug: var=ansible_local
+- name: print book title
+  debug: msg="The title of the book is {{ ansible_local.example.book.title }}"
+----
+
+The output of these tasks looks like this:
+
+----
+TASK: [print ansible_local] ***************************************************
+ok: [server1] => {
+    "ansible_local": {
+        "example": {
+            "book": {
+                "author": "Lorin Hochstein",
+                "publisher": "O'Reilly Media",
+                "title": "Ansible: Up and Running"
+            }
+        }
+    }
+}
+
+TASK: [print book title] ******************************************************
+ok: [server1] => {
+    "msg": "The title of the book is Ansible: Up and Running"
+}
+----
+
+Note the structure of value in the +ansible_local+ variable. Because the fact file is named _example.fact_, the +ansible_local+ variable is a dictionary that contains a key named `example`.((("variables", "facts", startref="ix_varsfact")))((("facts", startref="ix_fact")))
+
+=== Using set_fact to Define a New Variable
+
+Ansible also allows you to set a fact (effectively the same as defining a new variable) in a task by using the +set_fact+ module.((("set_fact module")))((("facts", "using set_fact to define a new variable")))((("variables", "defining using set_fact module"))) I often like to use +set_fact+ immediately after +register+ to make it simpler to refer to a variable. <<SET_FACT_SIMPLIFY>> demonstrates how to use +set_fact+ so that a variable can be referred to as +snap+ instead of +snap_result.stdout+.
+
+[[SET_FACT_SIMPLIFY]]
+.Using set_fact to simplify variable reference
+====
+[source,yaml+jinja]
+----
+- name: get snapshot id
+  shell: >
+    aws ec2 describe-snapshots --filters
+    Name=tag:Name,Values=my-snapshot
+    | jq --raw-output ".Snapshots[].SnapshotId"
+  register: snap_result
+
+- set_fact: snap={{ snap_result.stdout }}
+
+- name: delete old snapshot
+  command: aws ec2 delete-snapshot --snapshot-id "{{ snap }}"
+
+----
+====
+
+
+=== Built-in Variables
+
+Ansible defines several variables that are always available in a playbook; some
+of these variables are shown in <<built_in_variables>>.((("variables", "built-in", id="ix_varsbi")))
+
+[[built_in_variables]]
+.Built-in variables
+[options="header"]
+|========================================================================================================================================================================================================================
+| Parameter                | Description
+| hostvars                 | A dict whose keys are Ansible hostnames and values are dicts that map variable names to values
+| inventory_hostname       | Fully qualified domain name of the current host as known by Ansible (e.g., +myhost.example.com+)
+| inventory_hostname_short | Name of the current host as known by Ansible, without the domain name (e.g., +myhost+)
+| group_names              | A list of all groups that the current host is a member of
+| groups                   | A dict whose keys are Ansible group names and values are a list of hostnames that are members of the group. Includes +all+ and ungrouped groups: +{"all": [...], "web": [...], "ungrouped": [...]}+
+| ansible_check_mode       | A boolean that is true when running in check mode (see <<check_mode>>)
+| ansible_play_batch       | A list of the inventory hostnames that are active in the current batch (see <<batch_of_hosts>>)
+| ansible_play_hosts       | A list of all of the inventory hostnames that are active in the current play
+| ansible_version          | A dict with Ansible version info: +{"full": 2.3.1.0", "major": 2, "minor": 3, "revision": 1, "string": "2.3.1.0"}+
+|========================================================================================================================================================================================================================
+
+The +hostvars+, +inventory_hostname+, and +groups+ variables merit some additional discussion.
+
+==== hostvars
+
+In Ansible, variables are scoped by host. It only makes sense to talk about the
+value of a variable relative to a given host.((("variables", "built-in", "hostvars")))
+
+The idea that variables are relative to a given host might sound confusing, since
+Ansible allows you to define variables on a group of hosts. For example, if you define a
+variable in the `vars` section of a play, you are defining the variable for the
+set of hosts in the play. But what Ansible is really doing is creating a copy of
+that variable for each host in the group.
+
+Sometimes, a task that's running on one host needs the value of a variable
+defined on another host. Say you need to create a
+configuration file on web servers that contains the IP address of the _eth1_
+interface of the database server, and you don't know in advance what this IP
+address is. This IP address is available as the _ansible_eth1.ipv4.address_ fact for the
+database server.
+
+The solution is to use the +hostvars+ variable.((("hostvars variable"))) This is a dictionary that
+contains all of the variables defined on all of the hosts, keyed by the
+hostname as known to Ansible. If Ansible has not yet gathered facts on a host, you will not be able to access its facts by using the +hostvars+
+variable, unless fact caching is enabled.footnote:[See <<connections-ssh>> for information about fact caching.]
+
+Continuing our example, if our database server is _db.example.com_, then we could
+put the following in a configuration template:
+
+----
+{{ hostvars['db.example.com'].ansible_eth1.ipv4.address }}
+----
+
+This evaluates to the _ansible_eth1.ipv4.address_ fact associated with the
+host named _db.example.com_.
+
+==== inventory_hostname
+
+The `inventory_hostname` is the hostname of the current host, as known by
+Ansible.((("inventory_hostname variable")))((("variables", "built-in", "inventory_hostname")))((("hostnames", "inventory_hostname variable"))) If you have defined an alias for a host, this is the alias name.
+For example, if your inventory contains a line like this:
+
+----
+server1 ansible_host=192.168.4.10
+----
+
+then `inventory_hostname` would be +server1+.
+
+You can output all of the variables associated with the current host with the help of the +hostvars+ and +inventory_hostname+ variables:
+[source,yaml+jinja]
+----
+- debug: var=hostvars[inventory_hostname]
+----
+
+==== Groups
+
+The +groups+ variable can be useful when you need to access variables for a
+group of hosts.((("groups", "groups variable")))((("variables", "built-in", "groups"))) Let's say we are configuring a load-balancing host, and our configuration file needs the IP addresses of all of the servers in our web group. Our configuration file contains a fragment that looks like this:
+
+----
+backend web-backend
+{% for host in groups.web %}
+  server {{ hostvars[host].inventory_hostname }} \
+  {{ hostvars[host].ansible_default_ipv4.address }}:80
+{% endfor %}
+----
+
+[role="pagebreak-before"]
+The generated file looks like this:
+
+----
+backend web-backend
+  server georgia.example.com 203.0.113.15:80
+  server newhampshire.example.com 203.0.113.25:80
+  server newjersey.example.com 203.0.113.38:80
+
+----
+
+=== Setting Variables on the Command Line
+
+Variables set by passing +-e var=value+ to +ansible-playbook+ have the ((("variables", "built-in", startref="ix_varsbi")))((("variables", "setting on the command line")))((("command-line interface (CLI)", "setting variables on")))highest precedence, which means you can use this to override variables that are already defined. <<SETTING_VAR_COMMAND_LINE>> shows how to set the variable named +token+ to the value `12345`.
+
+[[SETTING_VAR_COMMAND_LINE]]
+.Setting a variable from the command line
+====
+[source,console]
+----
+$ ansible-playbook example.yml -e token=12345
+----
+====
+
+
+Use the +ansible-playbook -e var=value+ method when you want to use a
+playbook as you would a shell script that takes a command-line argument.((("ansible-playbook -e var=value command"))) The
++-e+ flag effectively allows you to pass variables as arguments.
+
+<<greet-yml>> shows a very simple playbook that outputs a message specified by a variable.
+
+[[greet-yml]]
+.greet.yml
+====
+[source,yaml+jinja]
+----
+- name: pass a message on the command line
+  hosts: localhost
+  vars:
+    greeting: "you didn't specify a message"
+  tasks:
+    - name: output a message
+      debug: msg="{{ greeting }}"
+
+----
+====
+
+If we invoke it like this:
+[source,console]
+----
+$ ansible-playbook greet.yml -e greeting=hiya
+----
+
+then the output looks like this:
+
+----
+PLAY [pass a message on the command line] *************************************
+
+TASK: [output a message] ******************************************************
+ok: [localhost] => {
+    "msg": "hiya"
+}
+
+PLAY RECAP ********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0
+----
+
+If you want to put a space in the variable, you need((("quotation marks", "in message output passed in a variable"))) to use quotes like this:
+[source,console]
+----
+$ ansible-playbook greet.yml -e 'greeting="hi there"'
+----
+
+You have to put single quotes around the entire +\'greeting="hi there"'+ so that the
+shell interprets that as a single argument to pass to Ansible, and you have to put double quotes
+around +"hi there"+ so that Ansible treats that message as a single string.
+
+Ansible also allows you to pass a file containing the variables instead of
+passing them directly on the command line by passing +@filename.yml+ as the
+argument to +-e+; for example, say((("ansible-playbook -e @filename.yml"))) we have a file that looks like <<greetvars>>.
+[[greetvars]]
+.greetvars.yml
+====
+[source,yaml+jinja]
+----
+greeting: hiya
+
+----
+====
+
+Then we can pass this file to the command line like this:
+[source,console]
+----
+$ ansible-playbook greet.yml -e @greetvars.yml
+
+----
+
+
+[[precedence]]
+=== Precedence
+
+We've covered several ways of defining variables, and it can happen
+that you define the same variable multiple times for a host, using different
+values.((("variables", "precedence rules for same variable defined in multiple ways")))((("precedence rules for variable values"))) Avoid this when you can, but if you can't, then keep in mind Ansible's
+precedence rules. When the same variable is defined in multiple ways, the
+precedence rules determine which value wins.
+
+The basic rules of precedence are as follows:
+
+. (Highest) +ansible-playbook -e var=value+
+. Task variables
+. Block variables
+. Role and include variables
+.  +set_fact+
+. Registered variables
+. +vars_files+
+. +vars_prompt+
+. Play variables
+. Host facts
+. +host_vars+ set on a playbook
+. +group_vars+ set on a playbook
+. +host_vars+ set in the inventory
+. +group_vars+ set in the inventory
+. Inventory variables
+. In _defaults/main.yml_ of a rolefootnote:[We'll discuss roles in <<roles>>.]
+
+In this chapter, we covered various ways to define and access
+variables and facts. The next chapter focuses on a realistic example of
+deploying an application.((("variables", startref="ix_vars")))

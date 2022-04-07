@@ -1,0 +1,367 @@
+[[Windows]]
+== Managing Windows Hosts
+
+Ansible is also known as SSH configuration management on steroids. Historically, Ansible has had a strong association with Unix and Linux, and we often see evidence of this in things like variable naming (e.g., `ansible_ssh_host`, `ansible_ssh_connection`, and `sudo`).((("Linux", "Ansible&#x27;s strong association with"))) However, Ansible has had built-in support for various connection mechanisms since the early days of the project.((("Windows hosts, managing", id="ix_Winhost")))
+
+Supporting an alien in terms of operating systems—as Windows is to Linux—was not only a matter of figuring out how to connect to Windows, but also making internal naming more operating-system generic (e.g., renaming variables `ansible_ssh_host` to `ansible_host`, and `sudo` to `become`).
+
+[NOTE]
+====
+Ansible introduced beta support of Microsoft Windows in version 1.7, but support has been out of beta only since version 2.1. In addition, the only way to run Ansible from a Windows host (i.e., to use a Windows-based control machine) is to run Ansible((("Linux", "Windows Subsystem for Linux (WSL)")))((("Windows Subsystem for Linux (WSL)"))) within the Windows Subsystem for Linux (WSL).
+====
+
+In terms of module contributions, Windows module contributions have been lagging behind a bit compared to the Linux community contributions.
+
+=== Connection to Windows
+
+To add Windows support, Ansible did not depart from its path by adding an agent on Windows—and in my opinion, this was a great decision.((("Windows hosts, managing", "connection to Windows"))) Ansible uses the integrated Windows Remote Management (WinRM) functionality, a SOAP-based protocol.((("SOAP-based protocol (WinRM)")))((("Windows Remote Management (WinRM)")))
+
+WinRM is our first dependency, and we need to get it covered in Python by installing the appropriate package on the managing host:
+
+----
+$ sudo pip install pywinrm
+----
+
+By default, Ansible will try to connect by SSH to a remote machine, which is why we have to tell Ansible in advance to change the connection mechanism. Usually, it is a good idea to put all of our Windows hosts into an inventory group. The particular group name you choose doesn't matter, but we will use the same group name later in our playbooks for referencing the hosts:
+
+[source,ini]
+.hosts
+----
+[windows]
+win01.example.com
+win02.example.com
+----
+
+After this, we add the connection configuration into _group_var/windows_ so all hosts of this group will inherit this configuration.
+
+[NOTE]
+====
+In 2015, Microsoft announced in its https://blogs.msdn.microsoft.com/powershell/2015/06/03/looking-forward-microsoft-support-for-secure-shell-ssh/[blog] work on native Secure Shell (SSH) integration.((("SSH", "Windows work on native SSH"))) This means that Ansible most certainly won't need a different connection configuration for Windows hosts in the future.
+====
+
+As mentioned earlier, the protocol is SOAP based and relies on HTTP in this case. By default, Ansible attempts to establish a secured HTTP (HTTPS) connection on port 5986 unless the `ansible_port` is configured to 5985.
+
+[source,yaml]
+.group_vars/windows
+----
+ansible_user: Administrator
+ansible_password: 2XLL43hDpQ1z
+ansible_connection: winrm
+----
+
+To use a custom port, for HTTPS or HTTP, configure the port _and_ the scheme to use:
+
+[source,yaml]
+.group_vars/windows
+----
+ansible_winrm_scheme: https
+ansible_port: 5999
+----
+
+=== PowerShell
+
+PowerShell on Microsoft Windows is a powerful command-line interface and scripting language built on top of the .NET framework and provides full management access not only from the local environment but also by using remote access.((("PowerShell", id="ix_PowSh")))((("Windows hosts, managing", "PowerShell", id="ix_WinhostPS")))
+
+Ansible modules for Windows are all written in PowerShell as PowerShell scripts.
+
+[NOTE]
+====
+In 2016, Microsoft open sourced PowerShell under the MIT license. The source and binary packages for recent versions of macOS, Ubuntu, and CentOS can be found on https://github.com/PowerShell/PowerShell[GitHub]. At the time of writing, the stable version of PowerShell is 5.1.
+====
+
+Ansible expects at least PowerShell version 3 to be installed on the remote machine. PowerShell 3 is available for Microsoft Windows 7 SP1, Microsoft Windows Server 2008 SP1, and later.
+
+[NOTE]
+====
+There is no requirement on the control machine, the machine we run Ansible from, to have PowerShell installed!
+====
+
+However, there were bugs in version 3, and it is necessary to use the latest patches from Microsoft if you have to stick with version 3 for any reason.
+
+To simplify the process of installation, upgrade, setup, and configuring PowerShell and Windows, Ansible provides a https://github.com/ansible/ansible/blob/devel/examples/scripts/ConfigureRemotingForAnsible.ps1[script].((("PowerShell", "ConfigureRemotingForAnsible.ps1 script")))((("ConfigureRemotingForAnsible.ps1 script")))
+
+To get started quickly, run the few shell commands as in <<powershell_setup>>, and you are ready to go. The script does not break anything if we run it multiple times.
+
+[[powershell_setup]]
+.Setting up Windows for Ansible
+====
+----
+wget http://bit.ly/1rHMn7b -OutFile .\ansible-setup.ps1
+.\ansible-setup.ps1
+----
+====
+
+[NOTE]
+====
++wget+ is an alias for _Invoke-WebRequest_, which is a built-in of PowerShell.
+====
+
+To see the version of PowerShell installed, run ((("PowerShell", "checking version installed")))the following command in a PowerShell console:
+
+----
+$PSVersionTable
+----
+
+You should see the output as in <<powershell_version_figure>>.
+
+[[powershell_version_figure]]
+.PowerShell version determination
+image::images/aur2_1701.png["PowerShell version determination"]
+
+We have made the connection configuration, so let's get started with a simple ping via `win_ping` to our Windows host. ((("win_ping")))Similar to the `ping` on GNU/Linux or Unix, this is not an ICMP ping; it is a test for establishing a connection by Ansible:
+
+----
+$ ansible windows -i hosts -m win_ping
+----
+
+If we get an error like the following in <<powershell_ssl_error>>,  we must either get a valid public TLS/SSL certificate or add a trust chain for an existing internal certificate authority (CA).((("TLS/SSL certificates", "invalid certificates on Windows host")))((("certificates", "TLS/SSL, invalid certificate error on Windows host")))((("PowerShell", "error resulting from invalid TLS/SSL certificates")))
+
+[[powershell_ssl_error]]
+.Error resulting from an invalid certificate
+====
+----
+$ ansible -m win_ping -i hosts windows
+win01.example.com | UNREACHABLE! => {
+    "changed": false,
+    "msg": "ssl: (\"bad handshake: Error([('SSL routines', 'tls_process_server_certi
+ficate', 'certificate verify failed')],)\",)",
+    "unreachable": true
+}
+----
+====
+
+To disable TLS/SSL certificate validation at our own risk:
+
+[source,yaml]
+.group_vars/windows
+----
+ansible_winrm_server_cert_validation: ignore
+----
+
+If we see output similar to <<PowerShell_ping_success>>, we have successfully tested the connection.((("PowerShell", "ping success")))
+
+[[PowerShell_ping_success]]
+.Result of a working connection
+====
+----
+$ ansible -m win_ping -i hosts windows
+win01.example.com | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+----
+====
+
+=== Windows Modules
+
+Ansible modules for Windows are prefixed with `win_`. ((("PowerShell", startref="ix_PowSh")))((("Windows hosts, managing", "PowerShell", startref="ix_WinhostPS")))At the time of writing, there are over 40 Windows modules, of which 19 are core modules.((("modules", "Windows, prefixed by win_")))((("Windows hosts, managing", "Windows modules"))) The http://docs.ansible.com/ansible/list_of_windows_modules.html[online documentation] has an overview of all available Windows modules.
+
+[NOTE]
+====
+One exception regarding the module naming: to get Ansible facts from Windows, the module must not be run as `win_setup` but as `setup`: `ansible -m setup -i hosts windows`.
+====
+
+=== Our First Playbook
+
+Now that we have a new Windows host, we should add it to our monitoring system. Let's create a playbook in which we will use some Windows modules.((("Windows hosts, managing", "creating first playbook")))((("playbooks", "creating for Windows hosts")))
+
+Our monitoring of choice is the well-known open source http://www.zabbix.com[Zabbix] monitoring software, for which we need to install _zabbix-agentd_ on our Windows host.((("Zabbix monitoring software")))
+
+Let's create a simple playbook, as in <<zabbix_windows_playbook>>, in which we install the _Zabbix Agent_.((("playbooks", "Windows host, installing Zabbix Agent on")))((("Zabbix Agent, installing on Windows")))
+
+[[zabbix_windows_playbook]]
+.Playbook for installing Zabbix Agent on Windows
+====
+[source,yaml]
+.zabbix_agent_windows.yml
+----
+---
+- hosts: windows
+  gather_facts: yes
+  tasks:
+    - name: install zabbix-agent
+      win_chocolatey: // <1>
+        name: zabbix-agent
+
+    - name: configure zabbix-agent
+      win_template:
+        src: zabbix_agentd.conf.j2
+        dest: "C:\ProgramData\zabbix\zabbix_agentd.conf"
+      notify: zabbix-agent restart
+
+    - name: zabbix-agent restart
+      win_service:
+        name: Zabbix Agent
+        state: started
+  handlers:
+    - name: zabbix-agent restart
+      win_service:
+        name: Zabbix Agent
+        state: restarted
+----
+====
+<1> `win_chocolatey` uses chocolatey, an open source package manager for Windows under the Apache License 2.0.((("win_chocolatey module")))
+
+The corresponding playbook in <<zabbix_windows_playbook>> doesn't look much different from what we would have implemented for Linux, except the modules used.
+
+For installing the software, we used the https://chocolatey.org/[_chocolatey_ package].((("chocolatey package")))((("win_package module"))) As an alternative module, `win_package`, could have been used.] For configuration, we used the `win_template` module, in which we were able to use the facts gathered (e.g., `ansible_hostname`) for configuration.((("templates", "win_template module")))((("win_template module")))
+
+Of course, _zabbix_agentd.conf_ must be copied from a Windows host in advance, before we can create a template of it. The template language is identical to the `template` module: Jinja2.
+
+The last module used, `win_service`, does not require further explanation.
+
+=== Updating Windows
+
+One of an administrator's daily hassles is to install software security updates.((("Windows hosts, managing", "updating Windows", id="ix_Winhostupd"))) It is one of these tasks no administrator really likes, mainly because it is boring even though it is important and necessary, but also because it can cause a lot of trouble if the update goes wrong. This is why it can make sense to disable automated installation of security updates in our operating system settings and test the updates before we run the updates in production environments.
+
+Ansible helps to automate software installation with one simple playbook, shown in <<windows_updates>>.((("playbooks", "Windows updates playbook")))((("security updates on Windows, playbook for"))) The playbook not only installs security updates but also reboots the machine afterward if necessary. Last but not least, it informs all users to log out before the system goes down.
+
+[role="pagebreak-before"]
+[[windows_updates]]
+.Playbook for installing security updates
+====
+[source,yaml]
+----
+---
+- hosts: windows
+  gather_facts: yes
+  serial: 1 // <1>
+  tasks:
+    - name: install software security updates
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+      register: update_result
+
+    - name: reboot windows if needed
+      win_reboot:
+        shutdown_timeout_sec: 1200 // <2>
+        msg: "Due to security updates this host will be rebooted in 20 minutes." // <3>
+      when: update_result.reboot_required
+----
+====
+<1> Use +serial+ for a rolling update.
+<2> Allow some time to let the OS install all updates properly.
+<3> Inform users on the system that it will be rebooted.
+
+Let's give it a shot, as shown in <<windows_updates_the_second>>.
+
+[[windows_updates_the_second]]
+.Playbook for installing security updates
+====
+
+----
+$ ansible-playbook security-updates.yml -i hosts -v
+No config file found; using defaults
+
+PLAY [windows] ****************************************************************
+
+TASK [Gathering Facts] ********************************************************
+ok: [win01.example.com]
+
+TASK [install software security updates] **************************************
+ok: [win01.example.com] => {"changed": false, "found_update_count": 0, "install
+ed_update_count": 0, "reboot_required": false, "updates": {}} // <1>
+
+TASK [reboot windows if needed] ***********************************************
+skipping: [win01.example.com] => {"changed": false, "skip_reason": "Conditional
+result was False", "skipped": true} // <2>
+
+PLAY RECAP ********************************************************************
+win01.example.com          : ok=2    changed=0    unreachable=0    failed=0
+----
+====
+<1> `win_updates` returns `false` for `reboot_required`.
+<2> Tasks are skipped because the condition pass:[<code>when: update_result&#x200b;.reboot_required</code>] returns _false_.
+
+That worked! Unfortunately, for once we do not have any pending security updates, and as a result the `reboot` task was skipped.((("Windows hosts, managing", "updating Windows", startref="ix_Winhostupd")))
+
+=== Adding Local Users
+
+In this part of the chapter, we are going to create users and groups on Windows. You might think that this is a solved problem: just use Microsoft Active Directory.((("Windows hosts, managing", "adding local users", id="ix_Winhostusr")))
+However, being able to run Windows anywhere in the cloud and not rely on a directory service can be advantageous for some use cases.
+
+In <<windows_users>>, we are going to create two user groups and two users based on a list of dictionaries. In a more production-like Ansible project, the user dictionary would be defined in `group_vars` or `host_vars`, but for better readability we keep it in the playbook.((("groups", "managing local groups on Windows")))((("users", "local, adding to Windows", id="ix_usrWin")))((("playbooks", "Windows local users and groups, managing")))
+
+[[windows_users]]
+.Manage local groups and users on Windows
+====
+[source,yaml]
+----
+- hosts: windows
+  gather_facts: no
+  tasks:
+    - name: create user groups
+      win_group:
+        name: "{{ item }}"
+      with_items:
+        - application
+        - deployments
+
+    - name: create users
+      win_user:
+        name: "{{ item.name }}"
+        password: "{{ item.password }}"
+        groups: "{{ item.groups }}"
+        password_expired: "{{ item.password_expired | default(false) }}" // <1>
+        groups_action: "{{ item.groups_action | default('add') }}" // <2>
+      with_items:
+        - name: gil
+          password: t3lCj1hU2Tnr
+          groups:
+            - Users
+            - deployments
+        - name: sarina
+          password: S3cr3t!
+          password_expired: true // <3>
+          groups:
+            - Users
+            - application
+----
+====
+<1> The optional password expiration is defaulted to unexpired if not set in the user dictionary.
+<2> The ++win_user++'s default behavior of groups is `replace`: the user will be removed from any other group they are already a member of. We change the default to `add` to prevent any removal. However, we can overwrite the behavior per user.
+<3> We expire Sarina's password. She needs to define a new password next time she logs on.
+
+Let's run it:
+----
+$ ansible-playbook users.yml -i hosts
+
+PLAY [windows] ****************************************************************
+
+TASK [create user groups] *****************************************************
+changed: [win01.example.com] => (item=application)
+changed: [win01.example.com] => (item=deployments)
+
+TASK [create users] ***********************************************************
+changed: [win01.example.com] => (item={u'password': u't3lCj1hU2Tnr', u'name':
+u'gil', u'groups': [u'Users', u'deployments']})
+changed: [win01.example.com] => (item={u'password_expired': True, u'password':
+u'S3cr3t!', u'name': u'sarina', u'groups': [u'Users', u'application']})
+
+PLAY RECAP ********************************************************************
+win01.example.com          : ok=2    changed=2    unreachable=0    failed=0
+----
+
+OK, that seems to have worked, but let's verify it.
+
+As we can see in <<windows_user_groups_image>>, the groups are there. Great!
+
+[[windows_user_groups_image]]
+.New groups have been created
+image::images/aur2_1702.png["Windows User groups"]
+
+Let's check the users as well, and whether all settings have been applied. In <<windows_users_image>>, we see that Ansible has created our users, and `sarina` has to change her password at next logon—perfect!
+
+[[windows_users_image]]
+.New users have been created
+image::images/aur2_1703.png["Windows Users"]
+
+=== Conclusion
+
+Ansible makes managing Microsoft Windows hosts almost as simple as with Linux and Unix.((("users", "local, adding to Windows", startref="ix_usrWin")))((("Windows hosts, managing", "adding local users", startref="ix_Winhostusr")))
+
+Microsoft's WinRM works well, even though the execution speed is not as fast as with SSH. It will be interesting to see how the execution time will improve with native SSH support for Windows and PowerShell.
+
+The Ansible modules for Windows are usable even though the community around them is still small. Nevertheless, Ansible is already the simplest tool for orchestrating IT across operating system borders.((("Windows hosts, managing", startref="ix_Winhost")))

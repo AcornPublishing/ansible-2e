@@ -1,0 +1,244 @@
+<section data-type="glossary" id="Glossary">
+<h1>Glossary</h1>
+
+<dl data-type="glossary">
+<dt data-type="glossterm">Alias</dt>
+<dd data-type="glossdef">
+<p>A name of a host in the inventory that is different from the actual
+hostname of the host.</p>
+</dd>
+<dt data-type="glossterm">AMI</dt>
+<dd data-type="glossdef">
+<p>Amazon Machine Image, a virtual machine image in the Amazon Elastic Compute Cloud, also known as <em>EC2</em>.</p>
+</dd>
+<dt data-type="glossterm">Ansible, Inc.</dt>
+<dd data-type="glossdef">
+<p>The company that manages the Ansible project.</p>
+</dd>
+<dt data-type="glossterm">Ansible Galaxy</dt>
+<dd data-type="glossdef">
+<p>A <a href="https://galaxy.ansible.com">repository</a> of Ansible roles contributed by the community.</p>
+</dd>
+<dt data-type="glossterm">Ansible Tower</dt>
+<dd data-type="glossdef">
+<p>A proprietary web-based dashboard and REST interface for controlling
+Ansible, sold by Ansible, Inc.</p>
+</dd>
+<dt data-type="glossterm">Check mode</dt>
+<dd data-type="glossdef">
+<p>An optional mode when running a playbook. When check mode is enabled, and when Ansible executes a playbook, it will not make any changes to remote
+hosts. Instead, it will simply report whether each task would have changed the
+state of the host. Sometimes referred to as <em>dry run</em> mode.</p>
+</dd>
+<dt data-type="glossterm">CIDR</dt>
+<dd data-type="glossdef">
+<p>Classless interdomain routing, a notation for specifying a range of IP
+addresses, used when defining Amazon EC2 security groups.</p>
+</dd>
+<dt data-type="glossterm">Configuration management</dt>
+<dd data-type="glossdef">
+<p>A process for ensuring that servers are in the proper
+state for doing their job. By <em>state</em>, we mean things like the configuration files for server applications
+have the correct values, the proper files are present, the correct services are
+running, the expected user accounts are present, permissions are set correctly, and so on.</p>
+</dd>
+<dt data-type="glossterm">Convergence</dt>
+<dd data-type="glossdef">
+<p>A property of configuration management systems whereby the system
+will execute multiple times against a server in order to get the server to reach
+the desired state, with each execution bringing the server closer to the desired
+state. Convergence is most closely associated with the CFEngine configuration
+management system. Convergence doesn&#8217;t really apply to Ansible, which puts
+servers into desired states after a single execution.</p>
+</dd>
+<dt data-type="glossterm">Complex arguments</dt>
+<dd data-type="glossdef">
+<p>Arguments passed to modules that are of type list or dictionary.</p>
+</dd>
+<dt data-type="glossterm">Container</dt>
+<dd data-type="glossdef">
+<p>A form of server virtualization in which the virtualization is
+implemented at the operating system level, so that the virtual machine instance
+shares the same kernel as the host. Docker is the most well-known container
+technology.</p>
+</dd>
+<dt data-type="glossterm">Control machine</dt>
+<dd data-type="glossdef">
+<p>The computer that you run Ansible on that is used to control
+the remote hosts.</p>
+</dd>
+<dt data-type="glossterm">Control socket</dt>
+<dd data-type="glossdef">
+<p>A Unix domain socket that SSH clients use to connect to a
+remote host when SSH multiplexing is enabled.</p>
+</dd>
+<dt data-type="glossterm">ControlPersist</dt>
+<dd data-type="glossdef">
+<p>A synonym for SSH multiplexing.</p>
+</dd>
+<dt data-type="glossterm">Declarative</dt>
+<dd data-type="glossdef">
+<p>A type of programming language in which the programmer describes the
+desired output, not the procedure for how to compute the output. Ansible&#8217;s
+playbooks are declarative. SQL is another example of a declarative language.
+Contrast with <em>procedural</em> languages, such as Java and Python.</p>
+</dd>
+<dt data-type="glossterm">Deployment</dt>
+<dd data-type="glossdef">
+<p>The process of bringing software up onto a live system.</p>
+</dd>
+<dt data-type="glossterm">DevOps</dt>
+<dd data-type="glossdef">
+<p>IT buzzword that gained popularity in the mid-2010s.</p>
+</dd>
+<dt data-type="glossterm">Dry run</dt>
+<dd data-type="glossdef">
+<p>See <em>Check mode</em>.</p>
+</dd>
+<dt data-type="glossterm">DSL</dt>
+<dd data-type="glossdef">
+<p>Domain-specific language. In systems that use DSLs, the user interacts
+with the systems by writing text files in the domain-specific language and then
+runs those files through the system. DSLs are not as powerful as general-purpose
+programming languages, but (if designed well) they are easier to read and write
+than general-purpose programming languages. Ansible exposes a DSL that uses YAML
+syntax.</p>
+</dd>
+<dt data-type="glossterm">Dynamic inventory</dt>
+<dd data-type="glossdef">
+<p>Source that provides Ansible with information about
+hosts and groups at playbook execution time.</p>
+</dd>
+<dt data-type="glossterm">EBS</dt>
+<dd data-type="glossdef">
+<p>Elastic Block Store. On Amazon EC2, an EBS refers to a persistent disk
+that can be attached to instances.</p>
+</dd>
+<dt data-type="glossterm">Fact</dt>
+<dd data-type="glossdef">
+<p>A variable that contains information about a specific host.</p>
+</dd>
+<dt data-type="glossterm">Glob</dt>
+<dd data-type="glossdef">
+<p>A pattern used by Unix shells to match against filenames. For
+example, <code>*.txt</code> is a glob that matches all files that end in <code>.txt</code>.</p>
+</dd>
+<dt data-type="glossterm">Group</dt>
+<dd data-type="glossdef">
+<p>A named collection of hosts.</p>
+</dd>
+<dt data-type="glossterm">Handler</dt>
+<dd data-type="glossdef">
+<p>Similar to a task, except that handlers execute only in response to a
+task that is configured to notify the handler on change of state.</p>
+</dd>
+<dt data-type="glossterm">Host</dt>
+<dd data-type="glossdef">
+<p>A remote server managed by Ansible.</p>
+</dd>
+<dt data-type="glossterm">IAM</dt>
+<dd data-type="glossdef">
+<p>Identity and Access Management, a feature of Amazon&#8217;s Elastic Compute
+Cloud that allows you to manage user and group permissions.</p>
+</dd>
+<dt data-type="glossterm">Idempotent</dt>
+<dd data-type="glossdef">
+<p>An action is idempotent if executing the action multiple times has
+the same effect as executing it once.</p>
+</dd>
+<dt data-type="glossterm">Instance</dt>
+<dd data-type="glossdef">
+<p>A virtual machine. The term is commonly used to refer to a virtual
+machine running inside an infrastructure-as-a-service cloud, such as Amazon&#8217;s
+Elastic Cloud Compute (EC2).</p>
+</dd>
+<dt data-type="glossterm">Inventory</dt>
+<dd data-type="glossdef">
+<p>The list of hosts and groups.</p>
+</dd>
+<dt data-type="glossterm">Lookups</dt>
+<dd data-type="glossdef">
+<p>Code that executes on the control machine to obtain some
+configuration data needed by Ansible while a playbook is running.</p>
+</dd>
+<dt data-type="glossterm">Module</dt>
+<dd data-type="glossdef">
+<p>Ansible script that performs one specific task. Examples include creating a user account, installing a package, or starting a service. Most Ansible modules are idempotent.</p>
+</dd>
+<dt data-type="glossterm">Orchestration</dt>
+<dd data-type="glossdef">
+<p>Performing a series of tasks in a well-specified order on a
+collection of servers. Orchestration is often needed for performing deployments.</p>
+</dd>
+<dt data-type="glossterm">Pattern</dt>
+<dd data-type="glossdef">
+<p>Ansible syntax for describing which hosts to run a play against.</p>
+</dd>
+<dt data-type="glossterm">Play</dt>
+<dd data-type="glossdef">
+<p>Associates a set of hosts with a list of tasks to perform on that host.</p>
+</dd>
+<dt data-type="glossterm">Playbook</dt>
+<dd data-type="glossdef">
+<p>An Ansible script. It specifies a list of plays and a collection of
+hosts to execute the plays against.</p>
+</dd>
+<dt data-type="glossterm">Registered variable</dt>
+<dd data-type="glossdef">
+<p>A variable created by using the <code>register</code> clause in a
+task.</p>
+</dd>
+<dt data-type="glossterm">Role</dt>
+<dd data-type="glossdef">
+<p>An Ansible mechanism for bundling together a collection of tasks,
+handlers, files, templates, and variables.</p>
+
+<p>For example, an <code>nginx</code> role might contain tasks for installing the Nginx
+package, generating the Nginx configuration file, copying TLS certificate files,
+and starting the Nginx service.</p>
+</dd>
+<dt data-type="glossterm">SSH multiplexing</dt>
+<dd data-type="glossdef">
+<p>A feature of the OpenSSH SSH client that can reduce the time it
+takes to make an SSH connection when making multiple SSH connections to the same
+machine. Ansible uses SSH multiplexing by default to improve performance.</p>
+</dd>
+<dt data-type="glossterm">Task</dt>
+<dd data-type="glossdef">
+<p>The unit of work in an Ansible play. A task specifies a module and its
+arguments, as well as an optional name and some additional optional parameters.</p>
+</dd>
+<dt data-type="glossterm">TLS</dt>
+<dd data-type="glossdef">
+<p>Transport Layer Security, a protocol used to secure communications between
+web servers and browsers. TLS superseded an earlier protocol called <em>Secure Sockets Layer</em> (SSL). Many people refer to TLS incorrectly as SSL.</p>
+</dd>
+<dt data-type="glossterm">Transport</dt>
+<dd data-type="glossdef">
+<p>The protocol and implementation Ansible uses to connect to the
+remote host. The default transport is SSH.</p>
+</dd>
+<dt data-type="glossterm">Vault</dt>
+<dd data-type="glossdef">
+<p>A mechanism used by Ansible for encrypting sensitive data on disk.
+Typically used to safely store secret data in a version-control system.</p>
+</dd>
+<dt data-type="glossterm">Vagrant</dt>
+<dd data-type="glossdef">
+<p>A tool for managing virtual machines, intended for use by developers
+to create reproducible development environments.</p>
+</dd>
+<dt data-type="glossterm">Virtualenv</dt>
+<dd data-type="glossdef">
+<p>A mechanism for installing Python packages into an environment that
+can be activated and deactivated. Enables a user to install Python packages
+without root access and without polluting the global Python package library on
+the machine.</p>
+</dd>
+<dt data-type="glossterm">VPC</dt>
+<dd data-type="glossdef">
+<p>Virtual Private Cloud. A term used by Amazon EC2 to describe an isolated
+network you can create for your EC2 <span class="keep-together">instances</span>.</p>
+</dd>
+</dl>
+</section>

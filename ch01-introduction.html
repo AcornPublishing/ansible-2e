@@ -1,0 +1,1107 @@
+<section data-type="chapter" id="introduction" class="pagenumrestart">
+<h1>Introduction</h1>
+
+
+<p>It&#8217;s an interesting time to be working in the IT industry. We don&#8217;t deliver software to our customers by installing a program on a single machine and calling it a day.<span data-type="footnote">OK, nobody ever really delivered software like that.</span> Instead, we are all slowly turning into system engineers.</p>
+
+<p>We now deploy software applications by stringing together services that run on a
+<span class="keep-together">distributed</span> set of computing resources and communicate over different networking
+protocols.  A typical application can include web servers, application servers,
+memory-based caching systems, task queues, message queues, SQL databases, NoSQL
+datastores, and load balancers.</p>
+
+<p>We also need to make sure we have the
+appropriate redundancies  in place, so that when failures happen (and they will),
+our software systems will handle these failures gracefully.  Then there are the secondary services that we also need to deploy and maintain, such as logging,
+monitoring, and analytics, as well as third-party services we need to interact
+with, such as infrastructure-as-a-service (IaaS) endpoints for managing virtual machine
+instances.<span data-type="footnote">Check out <a href="#cloudsysadmin"><em>The Practice of Cloud System Administration</em></a> and <a href="#dataintensive"><em>Designing Data-Intensive Applications</em></a> for excellent books on building and maintaining these types of distributed systems.</span></p>
+
+<p>You can wire up these services by hand: spinning up the servers you need,
+SSHing to each one, installing packages, editing config files, and so forth,
+but it&#8217;s a pain. It&#8217;s time-consuming, error-prone, and just plain dull to do
+this kind of work manually, especially around the third or fourth time. And for
+more complex tasks, like standing up an OpenStack cloud inside your application,
+doing it by hand is madness. There&#8217;s a better way.</p>
+
+<p>If you&#8217;re reading this, you&#8217;re probably already sold on the idea of
+configuration management and considering adopting Ansible as your configuration
+management tool. Whether you&#8217;re a developer deploying your code to production,
+or you&#8217;re a systems administrator looking for a better way to automate,
+I think you&#8217;ll find Ansible to be an excellent solution to
+your problem.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>A Note About Versions</h1>
+
+<p>The example code in this book was tested against version 2.3.0.0 of
+Ansible, which is the most recent release as of this writing.<a data-type="indexterm" data-primary="Ansible" data-secondary="versions"/>  As backward compatibility is a major goal of the Ansible project, these examples should work unmodified in future versions of Ansible.</p>
+<aside data-type="sidebar">
+<h5>What&#8217;s with the Name <em>Ansible</em>?</h5>
+<p>It&#8217;s a science-fiction reference. An <em>ansible</em> is a fictional communication
+device that can transfer information faster than the speed of light. Ursula K. Le Guin invented the concept in her book <em>Rocannon&#8217;s World</em>, and other
+sci-fi authors have since borrowed the idea from Le Guin.</p>
+
+<p>More specifically, Michael DeHaan took the name Ansible from the book <em>Ender&#8217;s
+Game</em> by Orson Scott Card. In that book, the ansible was used to control many remote ships at once, over vast distances. Think of it as a metaphor
+for controlling remote servers.</p>
+</aside>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Ansible: What Is It Good For?</h1>
+
+<p>Ansible is often described as a <em>configuration management</em> tool, and is
+typically mentioned in the same breath as <em>Chef</em>, <em>Puppet</em>, and <em>Salt</em>.<a data-type="indexterm" data-primary="configuration management tools"/><a data-type="indexterm" data-primary="Ansible" data-secondary="uses of"/>  When we
+talk about configuration management, we are typically talking about writing some
+kind of state description for our servers, and then using a tool to enforce that
+the servers are, indeed, in that state: the right packages are installed,
+configuration files contain the expected values and have the expected
+permissions, the right services are running, and so on.<a data-type="indexterm" data-primary="configuration management"/> Like other configuration
+management tools, Ansible exposes a domain-specific language (DSL) that you use
+to describe the state of your servers.</p>
+
+<p>These tools can be used for <em>deployment</em> as well.<a data-type="indexterm" data-primary="deployment, tools for"/> When people talk about deployment, they are usually referring to the process of taking software
+that was written in-house, generating binaries or static assets (if necessary),
+copying the required files to the server(s), and then starting up the services.
+<em>Capistrano</em> and <em>Fabric</em> are two examples of open source deployment tools.
+Ansible is a great tool for deployment as well as configuration
+management. Using a single tool for both configuration management and deployment
+makes life simpler for the folks responsible for operations.</p>
+
+<p>Some people talk about the need for <em>orchestration</em> of deployment.<a data-type="indexterm" data-primary="orchestration of deployment"/> This is
+where multiple remote servers are involved, and things have to happen in a
+specific order. For example, you need to bring up the database before bringing
+up the web servers, or you need to take web servers out of the load balancer one
+at a time in order to upgrade them without downtime. Ansible is good at this as
+well, and is designed from the ground up for performing actions on multiple
+servers. Ansible has a refreshingly simple model for controlling the order in which
+actions happen.</p>
+
+<p>Finally, you&#8217;ll hear people talk about <em>provisioning</em> new servers.<a data-type="indexterm" data-primary="provisioning servers"/><a data-type="indexterm" data-primary="cloud" data-secondary="Ansible modules for talking to public cloud services"/> In the context of public clouds such as Amazon EC2, this refers to spinning up a new virtual machine instance. Ansible has got you covered here, with a number of modules for talking to clouds, including EC2, Azure, Digital Ocean, Google Compute Engine, Linode, and Rackspace, as well as any clouds that support the OpenStack APIs.</p>
+<div data-type="note">
+<p>Confusingly, the <em>Vagrant</em> tool, covered later in this chapter, uses
+the term <em>provisioner</em> to refer to a tool that does the configuration
+management.<a data-type="indexterm" data-primary="provisioners"/> So, Vagrant refers to Ansible as a kind of provisioner, whereas I
+think of Vagrant as a provisioner, since Vagrant is responsible for
+starting up virtual machines.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>How Ansible Works</h1>
+
+<p><a data-type="xref" href="#overview_figure"/> shows a sample use case of Ansible in action. A user we&#8217;ll call Stacy is using Ansible to configure three Ubuntu-based web servers to run Nginx.<a data-type="indexterm" data-primary="Ansible" data-secondary="how it works"/> She has written an Ansible script called <em>webservers.yml</em>.<a data-type="indexterm" data-primary="playbooks"/> In Ansible, a script is called a <em>playbook</em>.<a data-type="indexterm" data-primary="hosts"/><a data-type="indexterm" data-primary="remote servers"/> A playbook describes which <em>hosts</em> (what Ansible calls <em>remote servers</em>) to configure, and an ordered list of <em>tasks</em> to perform on those hosts.<a data-type="indexterm" data-primary="tasks"/> In this example, the hosts are web1, web2, and web3, and the tasks are things such as these:</p>
+
+<ul>
+<li>
+<p>Install Nginx</p>
+</li>
+<li>
+<p>Generate an Nginx configuration file</p>
+</li>
+<li>
+<p>Copy over the security certificate</p>
+</li>
+<li>
+<p>Start the Nginx service</p>
+</li>
+</ul>
+
+<p>In the next chapter, we&#8217;ll discuss what&#8217;s in this playbook.  Stacy executes the playbook by using the <code>ansible-playbook</code> command. In the example, the playbook is named <em>webservers.yml</em>, and is executed by typing the following:</p>
+
+<pre data-type="programlisting">$ ansible-playbook webservers.yml</pre>
+
+<p>Ansible will make SSH connections in parallel to web1, web2, and web3. It will execute the first task on the list on all three hosts simultaneously. In this example, the first task is installing the Nginx apt package (since Ubuntu uses the apt package manager), so the task in the playbook would look something like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml">- name: Install nginx
+  apt: name=nginx</pre>
+
+<p>Ansible will do the following:</p>
+<ol>
+<li>
+<p>Generate a Python script that installs the Nginx package</p>
+</li>
+<li>
+<p>Copy the script to web1, web2, and web3</p>
+</li>
+<li>
+<p>Execute the script on web1, web2, and web3</p>
+</li>
+<li>
+<p>Wait for the script to complete execution on all hosts</p>
+</li>
+
+</ol>
+
+<p>Ansible will then move to the next task in the list, and go through these same
+four steps. It&#8217;s important to note the following:</p>
+
+<ul>
+<li>
+<p>Ansible runs each task in parallel across all hosts.</p>
+</li>
+<li>
+<p>Ansible waits until all hosts have completed a task before moving to the
+next task.</p>
+</li>
+<li>
+<p>Ansible runs the tasks in the order that you specify them.</p>
+</li>
+</ul>
+
+<figure id="overview_figure">
+<img src="images/aur2_0101.png" alt="Overview of Ansible behavior"/>
+<figcaption>Running an Ansible playbook to configure three web servers</figcaption>
+</figure>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1" class="pagebreak-before">
+<h1>What&#8217;s So Great About Ansible?</h1>
+
+<p>There are several open source configuration management tools out there to choose
+from.<a data-type="indexterm" id="ix_Ansadv" data-primary="Ansible" data-secondary="advantages of"/> Here are some of the things that drew me to Ansible.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Easy-to-Read Syntax</h2>
+
+<p>Recall that Ansible configuration management scripts are called <em>playbooks</em>.
+Ansible&#8217;s playbook syntax is built on top of YAML, <a data-type="indexterm" data-primary="playbooks" data-secondary="easy-to-read syntax"/>which is a data format
+language that was designed to be easy for humans to read and write.<a data-type="indexterm" data-primary="YAML"/> In a way, YAML is
+to JSON what Markdown is to HTML.</p>
+
+<p>I like to think of Ansible playbooks as <em>executable documentation</em>. It&#8217;s like
+the README file that describes the commands you had to type
+out to deploy your software, except that the instructions will never go out-of-date
+because they are also the code that gets executed directly.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Nothing to Install on the Remote Hosts</h2>
+
+<p>To manage a server with Ansible, the server needs to have SSH and
+Python 2.5 or later installed, or Python 2.4 with the Python <em>simplejson</em>
+library installed.<a data-type="indexterm" data-primary="SSH"/><a data-type="indexterm" data-primary="Python" data-secondary="Python 2.5 or later"/> There&#8217;s no need to preinstall an agent or any
+other software on the host.</p>
+
+<p>The control machine (the one that you use to control remote machines) needs to
+have Python 2.6 or later installed.</p>
+<div data-type="tip">
+<p>Some modules might require Python 2.5 or later, and some might have additional prerequisites. Check the documentation for each module to see whether it has specific requirements.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Push Based</h2>
+
+<p>Some configuration management systems that use agents, such as Chef and Puppet, are <em>pull based</em> by default.<a data-type="indexterm" data-primary="pull based configuration management systems"/> Agents installed on the servers periodically check in with a central service and pull down configuration information from the service. Making configuration management changes to servers goes something like this:</p>
+<ol>
+<li>
+<p>You: make a change to a configuration management script.</p>
+</li>
+<li>
+<p>You: push the change up to a configuration management central service.</p>
+</li>
+<li>
+<p>Agent on server: wakes up after periodic timer fires.</p>
+</li>
+<li>
+<p>Agent on server: connects to configuration management central service.</p>
+</li>
+<li>
+<p>Agent on server: downloads new configuration management scripts.</p>
+</li>
+<li>
+<p>Agent on server: executes configuration management scripts locally that change server state.</p>
+</li>
+
+</ol>
+
+<p>In contrast, Ansible is <em>push based</em> by default.<a data-type="indexterm" data-primary="push based (Ansible)"/> Making a change looks like
+this:</p>
+<ol>
+<li>
+<p>You: make a change to a playbook.</p>
+</li>
+<li>
+<p>You: run the new playbook.</p>
+</li>
+<li>
+<p>Ansible: connects to servers and executes modules, which changes server state.</p>
+</li>
+
+</ol>
+
+<p>As soon as you run the <code>ansible-playbook</code> command, Ansible connects to the
+remote server and does its thing.<a data-type="indexterm" data-primary="ansible-playbook command"/></p>
+
+<p>The push-based approach has a significant advantage: you control when the
+changes happen to the servers. You don&#8217;t need to wait around for a timer
+to expire. Advocates of the pull-based approach claim that pull is superior for
+scaling to large numbers of servers and for dealing with new servers that can come online
+anytime. However, as we&#8217;ll discuss later in the book, Ansible has been used
+successfully in production with thousands of nodes, and has excellent support
+for environments where servers are dynamically added and removed.</p>
+
+<p>If you really prefer using a pull-based model, Ansible has official support for pull mode, using a tool it ships with called <em>ansible-pull</em>. <a data-type="indexterm" data-primary="ansible-pull tool"/>I don&#8217;t cover pull mode in this book, but you can read more about it in the <a href="http://docs.ansible.com/playbooks_intro.html#ansible-pull">official documentation</a>.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Ansible Scales Down</h2>
+
+<p>Yes, Ansible can be used to manage hundreds or even thousands of
+nodes.<a data-type="indexterm" data-primary="scaling" data-secondary="scaling down with Ansible"/> But what got me hooked is how it scales down. Using Ansible to
+configure a single node is easy; you simply write a single playbook. Ansible obeys Alan Kay&#8217;s maxim: "Simple things should be simple; complex things should be possible."</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Built-in Modules</h2>
+
+<p>You can use Ansible to execute arbitrary shell commands on your remote servers, but Ansible&#8217;s real power comes from the collection of modules it ships with.<a data-type="indexterm" data-primary="modules" data-secondary="built-in, with Ansible"/> You use modules to perform tasks such as installing a package, restarting a service, or copying a configuration file.</p>
+
+<p>As you&#8217;ll see later, Ansible modules are <em>declarative</em>; you use them to describe
+the state you want the server to be in. For example, you would invoke the user
+module like this to ensure there was an account named <code>deploy</code> in the <code>web</code>
+group:</p>
+
+<pre data-type="programlisting">user: name=deploy group=web</pre>
+
+<p>Modules are also <em>idempotent</em>. If the <code>deploy</code> user doesn&#8217;t exist, Ansible will
+create it.<a data-type="indexterm" data-primary="idempotence" data-secondary="Ansible modules"/> If it does exist, Ansible won&#8217;t do anything. Idempotence is a
+nice property because it means that it&#8217;s safe to run an Ansible playbook
+multiple times against a server. This is a big improvement over the homegrown
+shell script approach, where running the shell script a second time might have a different
+(and likely unintended) effect.</p>
+<aside data-type="sidebar">
+<h5>What About Convergence?</h5>
+<p>Books on configuration management often mention the concept of <em>convergence</em>. Convergence in configuration management is most closely associated with Mark Burgess and the <em>CFEngine</em> configuration management system he authored.<a data-type="indexterm" data-primary="convergence"/> If a configuration management system is convergent, the system may
+run multiple times to put a server into its desired state, with each run bringing
+the server closer to that state.</p>
+
+<p>This idea of convergence doesn&#8217;t really apply to Ansible, as Ansible doesn&#8217;t
+have a notion of running multiple times to configure servers. Instead, Ansible modules are
+implemented in such a way that running an Ansible playbook a single time should
+put each server into the desired state.</p>
+
+<p>If you&#8217;re interested in what Ansible&#8217;s author thinks of the
+idea of convergence, see <a href="http://bit.ly/1InGh1A">Michael DeHaan&#8217;s post</a> in the Ansible Project newsgroup, titled "Idempotence, convergence, and other silly fancy words we use too often."</p>
+</aside>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Very Thin Layer of Abstraction</h2>
+
+<p>Some configuration management tools provide a layer of abstraction so
+that you can use the same configuration management scripts to manage servers
+running different operating systems.<a data-type="indexterm" data-primary="abstraction, thin layer of"/> For example, instead of having to deal with
+a specific package manager like yum or apt, the configuration management tool
+exposes a "package" abstraction that you use instead.</p>
+
+<p>Ansible isn&#8217;t like that.<a data-type="indexterm" data-primary="apt module"/><a data-type="indexterm" data-primary="yum module"/> You have to use the apt module to install packages on
+apt-based systems and the yum module to install packages on yum-based systems.</p>
+
+<p>Although this might sound like a disadvantage, in practice I&#8217;ve found that
+it makes Ansible easier to work with. Ansible doesn&#8217;t require that I learn a new
+set of abstractions that hide the differences between operating systems.
+This makes Ansible&#8217;s surface area smaller; there&#8217;s less you need to know before
+you can start writing playbooks.</p>
+
+<p>If you really want to, you can write your Ansible playbooks to take different
+actions, depending on the operating system of the remote server. But I try to
+avoid that when I can, and instead I focus on writing playbooks that are designed
+to run on a specific operating system, such as Ubuntu.</p>
+
+<p>The primary unit of reuse in the Ansible community is the module.<a data-type="indexterm" data-primary="modules" data-secondary="primary unit of reuse in Ansible"/> Because the
+scope of a module is small and can be operating-system specific, it&#8217;s
+straightforward to implement well-defined, shareable modules. The Ansible
+project is very open to accepting modules contributed by the community. I know because I&#8217;ve contributed a few.</p>
+
+<p>Ansible playbooks aren&#8217;t really intended to be reused across different contexts.<a data-type="indexterm" data-primary="playbooks" data-secondary="reuse of"/>
+In <a data-type="xref" href="#roles"/>, we&#8217;ll discuss <em>roles</em>, which is a way of collecting
+playbooks together so they are more reusable, as well as Ansible
+Galaxy, which is an online repository of these roles.<a data-type="indexterm" data-primary="roles"/></p>
+
+<p>In practice, though, every organization sets up its servers a little bit
+differently, and you&#8217;re best off writing playbooks for your organization rather
+than trying to reuse generic playbooks. I believe the primary value of looking at other
+people&#8217;s playbooks is for examples to see how things are done.</p>
+<aside data-type="sidebar">
+<h5>What Is Ansible, Inc.'s Relationship to Ansible?</h5>
+<p>The name <em>Ansible</em> refers to both the software and the company that runs the open source project. Michael DeHaan, the creator of Ansible the software, is the former CTO of Ansible the company. To avoid confusion, I refer to the software as <em>Ansible</em> and to the company as <em>Ansible, Inc</em>.<a data-type="indexterm" data-primary="Ansible, Inc."/></p>
+
+<p>Ansible, Inc. sells training and consulting services for Ansible, as well as a proprietary web-based management tool called <em>Ansible Tower</em>, which is covered in
+<a data-type="xref" href="#Ansible_Tower"/>. In October 2015, Red Hat acquired Ansible, Inc.<a data-type="indexterm" data-primary="Ansible Tower"/><a data-type="indexterm" data-primary="Ansible" data-secondary="advantages of" data-startref="ix_Ansadv"/></p>
+</aside>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Is Ansible Too Simple?</h1>
+
+<p>When I was working on this book, my editor mentioned to me that "some folks who use the XYZ configuration management tool call Ansible a for-loop over SSH scripts." If you&#8217;re considering switching over from another config
+management tool, you might be concerned at this point about whether Ansible is powerful enough
+to meet your needs.</p>
+
+<p>As you&#8217;ll soon learn, Ansible provides a lot more functionality than shell
+scripts. As I mentioned, Ansible&#8217;s modules provide idempotence, and Ansible has
+excellent support for templating, as well as defining variables at different
+scopes. Anybody who thinks Ansible is equivalent to working with shell scripts
+has never had to maintain a nontrivial program written in shell. I&#8217;ll always
+choose Ansible over shell scripts for config management tasks if given a choice.</p>
+
+<p>And if you&#8217;re worried about the scalability of SSH? As we&#8217;ll discuss in
+<a data-type="xref" href="#custom_modules"/>, Ansible uses SSH multiplexing to optimize performance, and there are
+folks out there who are managing thousands of nodes with Ansible.<span data-type="footnote">For example, see <a href="http://www.slideshare.net/JesseKeating/ansiblefest-rax">"Using Ansible at Scale to Manage a Public Cloud"</a> by Jesse Keating, formerly of Rackspace.</span></p>
+<div data-type="note">
+<p>I&#8217;m not familiar enough with the other tools to describe their
+differences in detail. If you&#8217;re looking for a head-to-head comparison of config management tools, check out <a href="#tastetest"><em>Taste Test: Puppet, Chef, Salt, Ansible</em></a> by Matt Jaynes. As it happens, Matt prefers Ansible.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>What Do I Need to Know?</h1>
+
+<p>To be productive with Ansible, you need to be familiar with basic Linux system administration tasks.<a data-type="indexterm" data-primary="Ansible" data-secondary="prerequisites for"/> Ansible makes it easy to automate your tasks, but it&#8217;s not the kind of tool that "automagically" does things that you otherwise wouldn&#8217;t know how to do.</p>
+
+<p>For this book, I assumed my readers would be <a data-type="indexterm" data-primary="Linux distributions"/>familiar with at least one Linux distribution (e.g., Ubuntu, RHEL/CentOS, SUSE), and that they would know how to</p>
+
+<ul>
+<li>
+<p>Connect to a remote machine using SSH</p>
+</li>
+<li>
+<p>Interact with the Bash command-line shell (pipes and redirection)</p>
+</li>
+<li>
+<p>Install packages</p>
+</li>
+<li>
+<p>Use the <code>sudo</code> command</p>
+</li>
+<li>
+<p>Check and set file permissions</p>
+</li>
+<li>
+<p>Start and stop services</p>
+</li>
+<li>
+<p>Set environment variables</p>
+</li>
+<li>
+<p>Write scripts (any language)</p>
+</li>
+</ul>
+
+<p>If these concepts are all familiar to you, you&#8217;re good to go with Ansible.</p>
+
+<p>I won&#8217;t assume you have knowledge of any particular programming language. For instance, you don&#8217;t need to know Python to use Ansible unless you want to write your own module.</p>
+
+<p>Ansible uses the YAML file format and the Jinja2 templating languages, so
+you&#8217;ll need to learn some YAML and Jinja2 to use Ansible, but both technologies are
+easy to pick up.<a data-type="indexterm" data-primary="YAML"/><a data-type="indexterm" data-primary="Jinja2 template engine"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>What Isn&#8217;t Covered</h1>
+
+<p>This book isn&#8217;t an exhaustive treatment of Ansible. It&#8217;s designed to get you
+productive in Ansible as quickly as possible and describes how to perform
+certain tasks that aren&#8217;t obvious from glancing over the official documentation.</p>
+
+<p>I don&#8217;t cover the official Ansible modules in detail. There are over 200
+of these, and the official Ansible reference documentation on the modules is
+quite good.</p>
+
+<p>I cover only the basic features of the templating engine that Ansible uses,
+Jinja2, primarily because I find that I generally need to use only those basic
+features when I use Ansible. If you need to use more advanced Jinja2
+features in your templates, I recommend you check out the official <a href="http://jinja.pocoo.org/docs/dev/">Jinja2 documentation</a>.</p>
+
+<p>I don&#8217;t go into detail about some features of Ansible that are mainly useful
+when you are running Ansible on an older version of Linux. This includes
+features such as the <em>Paramiko</em> SSH client and <em>accelerated mode</em>.</p>
+
+<p>Finally, there are several features of Ansible I don&#8217;t cover simply to keep the book a manageable length. These features include pull mode, logging, connecting to hosts using protocols other than SSH, and prompting the user for passwords or input. I encourage you to check out the official docs to find out more about these features.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Installing Ansible</h1>
+
+<p>If you&#8217;re running on a Linux machine, all of the major Linux distributions package
+Ansible these days, so you should be able to install it using your native
+package manager, although this might be an older version of Ansible.<a data-type="indexterm" data-primary="Ansible" data-secondary="installing"/>
+If you&#8217;re running on macOS, I recommend you use the excellent Homebrew
+package manager to install Ansible.<a data-type="indexterm" data-primary="Homebrew package manager"/></p>
+
+<p>If all else fails, you can install it using <em>pip</em>, Python&#8217;s package manager. You
+can install it as root by running<a data-type="indexterm" data-primary="pip, installing Ansible with"/> the following:</p>
+
+<pre data-type="programlisting">$ sudo pip install ansible</pre>
+
+<p>If you don&#8217;t want to install Ansible as root, you can safely install it into a Python
+<em>virtualenv</em>.<a data-type="indexterm" data-primary="Python" data-secondary="virtualenv"/><a data-type="indexterm" data-primary="virtualenv" data-secondary="installing Ansible in"/> If you&#8217;re not familiar with virtualenvs, you can use a newer tool
+called <em>pipsi</em> that will automatically <a data-type="indexterm" data-primary="pipsi, installing Ansible with"/>install Ansible into a virtualenv for you:</p>
+
+<pre data-type="programlisting">$ wget https://raw.githubusercontent.com/mitsuhiko/pipsi/master/get-pipsi.py
+$ python get-pipsi.py
+$ pipsi install ansible</pre>
+
+<p>If you go the pipsi route, you need to update your PATH environment
+variable to include <em>~/.local/bin</em>.<a data-type="indexterm" data-primary="PATH environment variable"/> Some Ansible plugins and modules might require additional Python libraries. <a data-type="indexterm" data-primary="Docker" data-secondary="docker-py for Ansible Docker modules"/>If you&#8217;ve installed with pipsi, and you want to install <em>docker-py</em> (needed by the Ansible Docker modules) and <em>boto</em> (needed by the Ansible EC2 modules), you <a data-type="indexterm" data-primary="Boto library"/>do it like this:</p>
+
+<pre data-type="programlisting">$ cd ~/.local/venvs/ansible
+$ source bin/activate
+$ pip install docker-py boto</pre>
+
+<p>If you&#8217;re feeling adventurous and want to use the bleeding-edge version of Ansible, you can grab the development branch from GitHub:</p>
+
+<pre data-type="programlisting">$ git clone https://github.com/ansible/ansible.git --recursive</pre>
+
+<p>If you&#8217;re running Ansible from the development branch,<a data-type="indexterm" data-primary="development branch, running Ansible from"/> you need to run these
+commands each time to set up your environment variables, including your PATH
+variable so that your shell knows where the <em>ansible</em> and <em>ansible-playbooks</em>
+programs are:</p>
+
+<pre data-type="programlisting">$ cd ./ansible
+$ source ./hacking/env-setup</pre>
+
+<p>For more details on installation see these resources:</p>
+
+<ul>
+<li>
+<p><a href="http://docs.ansible.com/intro_installation.html">Official Ansible install docs</a></p>
+</li>
+<li>
+<p><a href="http://pip.readthedocs.org/">Pip</a></p>
+</li>
+<li>
+<p><a href="http://docs.python-guide.org/en/latest/dev/virtualenvs/">Virtualenv</a></p>
+</li>
+<li>
+<p><a href="https://github.com/mitsuhiko/pipsi">Pipsi</a></p>
+</li>
+</ul>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Setting Up a Server for Testing</h1>
+
+<p>You need to have SSH access and root privileges on a Linux server to follow along with the examples in this book.<a data-type="indexterm" id="ix_testser" data-primary="test server for Ansible"/><a data-type="indexterm" id="ix_serversetup" data-primary="servers" data-secondary="setting up a server for testing"/><a data-type="indexterm" data-primary="Linux" data-secondary="low-cost access through cloud to virtual machine"/><a data-type="indexterm" data-primary="cloud" data-secondary="low-cost access to Linux virtual machine"/> Fortunately, these days it&#8217;s easy to get
+low-cost access to a Linux virtual machine through a public cloud service such as
+Amazon EC2, Google Compute Engine, Microsoft Azure,<span data-type="footnote">Yes, Azure supports Linux servers.</span> Digital Ocean, Linode&#8230;you get the idea.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Using Vagrant to Set Up a Test Server</h2>
+
+<p>If you prefer not to spend the money on a public cloud, I recommend
+you install Vagrant on your machine. Vagrant is an excellent open source tool for managing virtual machines.<a data-type="indexterm" id="ix_Vagtestser" data-primary="Vagrant" data-secondary="setting up test server with"/> You can use Vagrant to boot a Linux virtual
+machine inside your laptop, and you can use that as a test server.</p>
+
+<p>Vagrant has built-in support for provisioning virtual machines with Ansible, but
+we&#8217;ll talk about that in detail in <a data-type="xref" href="#inventory"/>. For now, we&#8217;ll just manage a Vagrant
+virtual machine as if it were a regular Linux server.</p>
+
+<p>Vagrant needs the VirtualBox virtualizer to be installed on your machine.
+Download <a href="http://www.virtualbox.org">VirtualBox</a> and then download <a href="http://www.vagrantup.com">Vagrant</a>.<a data-type="indexterm" data-primary="VirtualBox virtualizer"/></p>
+
+<p>I recommend you create a directory for your Ansible playbooks and related files. In the following example, I&#8217;ve named mine <em>playbooks</em>.</p>
+
+<p>Run the following commands to create a Vagrant configuration file (Vagrantfile)
+for <a data-type="indexterm" id="ix_Ubuvm" data-primary="Ubuntu 14.04 virtual machine, setting up"/>an Ubuntu 14.04 (Trusty Tahr) 64-bit virtual machine image,<span data-type="footnote">Vagrant uses the term <em>machine</em> to refer to a virtual machine and <em>box</em> to refer to a virtual machine image.</span> and boot it:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ mkdir playbooks
+$ cd playbooks
+$ vagrant init ubuntu/trusty64
+$ vagrant up</pre>
+<div data-type="note">
+<p>The first time you use <code>vagrant up</code>, it will download the virtual machine image file, which might take a while, depending on your internet connection.</p>
+</div>
+
+<p>If all goes well, the output should look like this:</p>
+
+<pre data-type="programlisting">Bringing machine 'default' up with 'virtualbox' provider...
+==&gt; default: Importing base box 'ubuntu/trusty64'...
+==&gt; default: Matching MAC address for NAT networking...
+==&gt; default: Checking if box 'ubuntu/trusty64' is up to date...
+==&gt; default: Setting the name of the VM: playbooks_default_1474348723697_56934
+==&gt; default: Clearing any previously set forwarded ports...
+==&gt; default: Clearing any previously set network interfaces...
+==&gt; default: Preparing network interfaces based on configuration...
+    default: Adapter 1: nat
+==&gt; default: Forwarding ports...
+    default: 22 (guest) =&gt; 2222 (host) (adapter 1)
+==&gt; default: Booting VM...
+==&gt; default: Waiting for machine to boot. This may take a few minutes...
+    default: SSH address: 127.0.0.1:2222
+    default: SSH username: vagrant
+    default: SSH auth method: private key
+    default: Warning: Remote connection disconnect. Retrying...
+    default: Warning: Remote connection disconnect. Retrying...
+    default:
+    default: Vagrant insecure key detected. Vagrant will automatically replace
+    default: this with a newly generated keypair for better security.
+    default:
+    default: Inserting generated public key within guest...
+    default: Removing insecure key from the guest if it's present...
+    default: Key inserted! Disconnecting and reconnecting using new SSH key...
+==&gt; default: Machine booted and ready!
+==&gt; default: Checking for guest additions in VM...
+    default: The guest additions on this VM do not match the installed version
+    default: of VirtualBox! In most cases this is fine, but in rare cases it can
+    default: prevent things such as shared folders from working properly. If you
+    default: see shared folder errors, please make sure the guest additions
+    default: within the virtual machine match the version of VirtualBox you have
+    default: installed on your host and reload your VM.
+    default:
+    default: Guest Additions Version: 4.3.36
+    default: VirtualBox Version: 5.0
+==&gt; default: Mounting shared folders...
+    default: /vagrant =&gt; /Users/lorin/dev/ansiblebook/ch01/playbooks</pre>
+
+<p>You should be able to SSH into your new Ubuntu 14.04 virtual machine by running the <a data-type="indexterm" data-primary="SSH" data-secondary="accessing Ubuntu 14.04 virtual machine with vagrant ssh"/><a data-type="indexterm" data-primary="vagrant ssh command"/>following:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ vagrant ssh</pre>
+
+<p>If this works, you should see a login screen like this:</p>
+
+<pre data-type="programlisting">Welcome to Ubuntu 14.04.5 LTS (GNU/Linux 3.13.0-96-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com/
+
+  System information as of Fri Sep 23 05:13:05 UTC 2016
+
+  System load:  0.76              Processes:           80
+  Usage of /:   3.5% of 39.34GB   Users logged in:     0
+  Memory usage: 25%               IP address for eth0: 10.0.2.15
+  Swap usage:   0%
+
+  Graph this data and manage this system at:
+    https://landscape.canonical.com/
+
+  Get cloud support with Ubuntu Advantage Cloud Guest:
+    http://www.ubuntu.com/business/services/cloud
+
+0 packages can be updated.
+0 updates are security updates.
+
+New release '16.04.1 LTS' available.
+Run 'do-release-upgrade' to upgrade to it.</pre>
+
+<p>Type <strong><code>exit</code></strong> to quit the SSH session.</p>
+
+<p>This approach lets us interact with the shell, but Ansible needs to connect to the virtual machine by using the regular SSH client, not the <code>vagrant ssh</code> command.<a data-type="indexterm" data-primary="vagrant ssh-config command"/><a data-type="indexterm" data-primary="SSH" data-secondary="vagrant ssh-config command"/></p>
+
+<p>Tell Vagrant to output the SSH connection details by typing the following:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ vagrant ssh-config</pre>
+
+<p>On my machine, the output looks like this:</p>
+
+<pre data-type="programlisting">Host default
+  HostName 127.0.0.1
+  User vagrant
+  Port 2222
+  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking no
+  PasswordAuthentication no
+  IdentityFile /Users/lorin/dev/ansiblebook/ch01/playbooks/.vagrant/
+  machines/default/virtualbox/private_key
+  IdentitiesOnly yes
+  LogLevel FATAL</pre>
+
+<p>The important lines are shown here:</p>
+
+<pre data-type="programlisting">  HostName 127.0.0.1
+  User vagrant
+  Port 2222
+  IdentityFile /Users/lorin/dev/ansiblebook/ch01/playbooks/.vagrant/
+  machines/default/virtualbox/private_key</pre>
+<div data-type="note">
+<p>Vagrant 1.7 changed how it handled private SSH keys. Starting with 1.7, Vagrant generates a new private key for each machine. Earlier versions used the same key, which was in the default location of <em>~/.vagrant.d/insecure_private_key</em>. The examples in this book use Vagrant 1.7.</p>
+</div>
+
+<p>In your case, every field should likely be the same except for the path of the
+identity file.</p>
+
+<p>Confirm that you can start an SSH session from the command line by using this information. In my case, the SSH command is as follows:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ssh vagrant@127.0.0.1 -p 2222 -i /Users/lorin/dev/ansiblebook/ch01/
+playbooks/.vagrant/machines/default/virtualbox/private_key</pre>
+
+<p>You should see the Ubuntu login screen. Type <strong><code>exit</code></strong> to quit the SSH session.<a data-type="indexterm" data-primary="Ubuntu 14.04 virtual machine, setting up" data-startref="ix_Ubuvm"/><a data-type="indexterm" data-primary="Vagrant" data-secondary="setting up test server with"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Telling Ansible About Your Test Server</h2>
+
+<p>Ansible can manage only the servers it explicitly knows about. You provide Ansible with information about servers by specifying them in an inventory file.<a data-type="indexterm" data-primary="test server for Ansible" data-secondary="telling Ansible about the server"/></p>
+
+<p>Each server needs a name that Ansible will use to identify it. You can use the
+hostname of the server, or you can give it an alias and pass additional
+arguments to tell Ansible how to connect to it. We&#8217;ll give our Vagrant server the alias of <code>testserver</code>.</p>
+
+<p>Create a file called <em>hosts</em> in the <em>playbooks</em> directory. This file will serve as the inventory file. If you&#8217;re using a Vagrant machine as your test server, your <em>hosts</em> file should look like <a data-type="xref" href="#FIRST_INVENTORY"/>.  I&#8217;ve broken up the file content across multiple lines so that it fits on the page, but it should be all on one line in your file, without any backslashes.</p>
+<div id="FIRST_INVENTORY" data-type="example">
+<h5>playbooks/hosts</h5>
+
+<pre data-type="programlisting">testserver ansible_host=127.0.0.1 ansible_port=2222 \
+ ansible_user=vagrant \
+ ansible_private_key_file=.vagrant/machines/default/virtualbox/private_key</pre></div>
+
+<p>Here we see one of the drawbacks of using Vagrant: we have to explicitly pass in
+extra arguments to tell Ansible how to connect. In most cases, we won&#8217;t need this extra data.</p>
+
+<p>Later in this chapter, you&#8217;ll see how to use the <em>ansible.cfg</em> file to avoid
+having to be so verbose in the inventory file. In later chapters, you&#8217;ll see how
+to use Ansible variables to similar effect.</p>
+
+<p>If you have an Ubuntu machine on Amazon EC2 with a hostname like
+<code>ec2-203-0-113-120.compute-1.amazonaws.com</code>, then your inventory file will look
+something like this (all on one line):</p>
+
+<pre data-type="programlisting">testserver ansible_host=ec2-203-0-113-120.compute-1.amazonaws.com \
+ ansible_user=ubuntu ansible_private_key_file=/path/to/keyfile.pem</pre>
+<div data-type="tip">
+<p>Ansible supports the ssh-agent program, so you don&#8217;t need to explicitly specify SSH key files in <a data-type="indexterm" data-primary="SSH" data-secondary="private keys"/><a data-type="indexterm" data-primary="ssh-agent"/>your inventory files. See <a data-type="xref" href="#SSH_AGENT"/> for more details if you haven&#8217;t used ssh-agent before.</p>
+</div>
+
+<p>We&#8217;ll use the <code>ansible</code> command-line tool to verify that we can use Ansible to connect to the server. <a data-type="indexterm" data-primary="ansible command"/>You won&#8217;t use the <code>ansible</code> command often; it&#8217;s mostly used for ad hoc, one-off things.</p>
+
+<p>Let&#8217;s tell Ansible to connect to the server named <code>testserver</code> described in the inventory file named <em>hosts</em> and<a data-type="indexterm" data-primary="ping module, invoking"/> invoke the <code>ping</code> module:</p>
+
+<pre data-type="programlisting">$ ansible testserver -i hosts -m ping</pre>
+
+<p>If your local SSH client has host-key verification enabled, you might see something that looks like this the first time Ansible tries to connect to the server:</p>
+
+<pre data-type="programlisting">The authenticity of host '[127.0.0.1]:2222 ([127.0.0.1]:2222)' \
+can't be established.
+RSA key fingerprint is e8:0d:7d:ef:57:07:81:98:40:31:19:53:a8:d0:76:21.
+Are you sure you want to continue connecting (yes/no)?</pre>
+
+<p>You can just type <strong><code>yes</code></strong>.</p>
+
+<p>If it succeeded, output will look like this:</p>
+
+<pre data-type="programlisting" class="pagebreak-before">testserver | success &gt;&gt; {
+    "changed": false,
+    "ping": "pong"
+}</pre>
+<div data-type="tip">
+<p>If Ansible did not succeed, add the <code>-vvvv</code> flag to<a data-type="indexterm" data-primary="ansible command" data-secondary="-vvvv flag"/> see more details about the error:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -i hosts -m ping -vvvv</pre>
+</div>
+
+<p>We can see that the module succeeded. The <code>"changed": false</code> part of the
+output tells us that executing the module did not change the state of the server. The <code>"ping": "pong"</code> text is output that is specific to the <code>ping</code> module.</p>
+
+<p>The <code>ping</code> module doesn&#8217;t do anything other than check that Ansible can
+start an SSH session with the servers. It&#8217;s a useful tool for testing that Ansible
+can connect to the server.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Simplifying with the ansible.cfg File</h2>
+
+<p>We had to type a lot of text in the inventory file to tell Ansible about our
+test server.<a data-type="indexterm" data-primary="test server for Ansible" data-secondary="simplifying with ansible.cfg file"/> Fortunately, Ansible has ways to specify
+these sorts of variables so we don&#8217;t have to put them all in one place. Right now, we&#8217;ll use one such mechanism, the <em>ansible.cfg</em> file, to set some
+defaults so we don&#8217;t need to type as much.</p>
+<aside data-type="sidebar">
+<h5>Where Should I Put My ansible.cfg File?</h5>
+<p>Ansible looks for an <em>ansible.cfg</em> file in the following places, in this order:</p>
+<ol>
+<li>
+<p>File specified by the <code>ANSIBLE_CONFIG</code> environment variable</p>
+</li>
+<li>
+<p><em>./ansible.cfg</em> (<em>ansible.cfg</em> in the current directory)</p>
+</li>
+<li>
+<p><em>~/.ansible.cfg</em> (<em>.ansible.cfg</em> in your home directory)</p>
+</li>
+<li>
+<p><em>/etc/ansible/ansible.cfg</em></p>
+</li>
+
+</ol>
+
+<p>I typically put <em>ansible.cfg</em> in the current directory, alongside my
+playbooks. That way, I can check it into the same version-control repository that my
+playbooks are in.</p>
+</aside>
+
+<p><a data-type="xref" href="#EX_CONFIG"/> shows an <em>ansible.cfg</em> file that specifies the location of
+the inventory file (<code>inventory</code>), the user to SSH (<code>remote_user</code>), and the SSH
+private key (<code>private_&#x200b;key_file</code>). This assumes you&#8217;re using Vagrant. If you&#8217;re using your own server, you&#8217;ll need to set the <code>remote_user</code> and <code>private_key_file</code>
+values accordingly.</p>
+
+<p>Our example configuration also disables SSH host-key checking.<a data-type="indexterm" data-primary="SSH" data-secondary="host-key checking, disabling"/> This is convenient
+when dealing with Vagrant machines; otherwise, we need to edit our
+<em>~/.ssh/known_hosts</em> file every time we destroy and re-create a Vagrant machine.
+However, disabling host-key checking can be a security risk when connecting to
+other servers over the network. If you&#8217;re not familiar with host keys, they are
+covered in detail in <a data-type="xref" href="#Appendix"/>.</p>
+<div id="EX_CONFIG" data-type="example">
+<h5>ansible.cfg</h5>
+
+<pre data-type="programlisting" data-code-language="ini">[defaults]
+inventory = hosts
+remote_user = vagrant
+private_key_file = .vagrant/machines/default/virtualbox/private_key
+host_key_checking = False</pre></div>
+<aside data-type="sidebar">
+<h5>Ansible and Version Control</h5>
+<p>Ansible uses <em>/etc/ansible/hosts</em> as the default location for the inventory
+file. However, I never use this because I like to keep my inventory files
+version-controlled alongside my playbooks.</p>
+
+<p>Although we don&#8217;t cover the topic of version control in this book, I strongly
+recommend you use a version-control system such as Git for maintaining all of your
+playbooks. If you&#8217;re a developer, you&#8217;re already familiar with version-control
+systems. If you&#8217;re a systems administrator and aren&#8217;t using version control yet,
+this is a perfect opportunity to get started.</p>
+</aside>
+
+<p>With our default values set, we no longer need to specify the SSH user or key
+file in our <em>hosts</em> file. Instead, it simplifies to the following:</p>
+
+<pre data-type="programlisting">testserver ansible_host=127.0.0.1 ansible_port=2222</pre>
+
+<p>We can also invoke Ansible without passing the <code>-i hostname</code> arguments, like so:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -m ping</pre>
+
+<p>I like to use the <code>ansible</code> command-line tool to run arbitrary commands on remote machines, like parallel SSH. You can execute arbitrary commands with the
+<code>command</code> module.<a data-type="indexterm" data-primary="ansible command" data-secondary="invoking command module"/><a data-type="indexterm" data-primary="command module"/> When invoking this module, you also need to pass an argument
+to the module with the <code>-a</code> flag, which is the command to run.</p>
+
+<p>For example, to check the uptime of our server, we can use this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -m command -a uptime</pre>
+
+<p>Output should look like this:</p>
+
+<pre data-type="programlisting">testserver | success | rc=0 &gt;&gt;
+ 17:14:07 up  1:16,  1 user,  load average: 0.16, 0.05, 0.04</pre>
+
+<p>The <code>command</code> module is so commonly used that it&#8217;s the default module, so we can
+omit it:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -a uptime</pre>
+
+<p>If our command contains spaces, we need to quote it so that the shell passes the entire string as a single argument to Ansible.<a data-type="indexterm" data-primary="&quot;&quot; (double quotes), enclosing command text containing spaces"/> For example, to view the last several lines of the <em>/var/log/dmesg</em> logfile:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -a "tail /var/log/dmesg"</pre>
+
+<p>The output from my Vagrant machine looks like this:</p>
+
+<pre data-type="programlisting">testserver | success | rc=0 &gt;&gt;
+[    5.170544] type=1400 audit(1409500641.335:9): apparmor="STATUS" operation=
+"profile_replace" profile="unconfined" name="/usr/lib/NetworkManager/nm-dhcp-c
+lient.act on" pid=888 comm="apparmor_parser"
+[    5.170547] type=1400 audit(1409500641.335:10): apparmor="STATUS" operation=
+"profile_replace" profile="unconfined" name="/usr/lib/connman/scripts/dhclient-
+script" pid=888 comm="apparmor_parser"
+[    5.222366] vboxvideo: Unknown symbol drm_open (err 0)
+[    5.222370] vboxvideo: Unknown symbol drm_poll (err 0)
+[    5.222372] vboxvideo: Unknown symbol drm_pci_init (err 0)
+[    5.222375] vboxvideo: Unknown symbol drm_ioctl (err 0)
+[    5.222376] vboxvideo: Unknown symbol drm_vblank_init (err 0)
+[    5.222378] vboxvideo: Unknown symbol drm_mmap (err 0)
+[    5.222380] vboxvideo: Unknown symbol drm_pci_exit (err 0)
+[    5.222381] vboxvideo: Unknown symbol drm_release (err 0)</pre>
+
+<p>If we need root access, we pass in the <code>-b</code> flag to tell Ansible to <em>become</em> the root user.<a data-type="indexterm" data-primary="root user"/> For example, accessing <em>/var/log/syslog</em> requires root access:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -b -a "tail /var/log/syslog"</pre>
+
+<p>The output looks something like this:</p>
+
+<pre data-type="programlisting">testserver | success | rc=0 &gt;&gt;
+Aug 31 15:57:49 vagrant-ubuntu-trusty-64 ntpdate[1465]: /
+adjust time server 91.189
+94.4 offset -0.003191 sec
+Aug 31 16:17:01 vagrant-ubuntu-trusty-64 CRON[1480]: (root) CMD (   cd /
+&amp;&amp; run-p
+rts --report /etc/cron.hourly)
+Aug 31 17:04:18 vagrant-ubuntu-trusty-64 ansible-ping: Invoked with data=None
+Aug 31 17:12:33 vagrant-ubuntu-trusty-64 ansible-ping: Invoked with data=None
+Aug 31 17:14:07 vagrant-ubuntu-trusty-64 ansible-command: Invoked with executable
+None shell=False args=uptime removes=None creates=None chdir=None
+Aug 31 17:16:01 vagrant-ubuntu-trusty-64 ansible-command: Invoked with executable
+None shell=False args=tail /var/log/messages removes=None creates=None chdir=None
+Aug 31 17:17:01 vagrant-ubuntu-trusty-64 CRON[2091]: (root) CMD (   cd /
+&amp;&amp; run-pa
+rts --report /etc/cron.hourly)
+Aug 31 17:17:09 vagrant-ubuntu-trusty-64 ansible-command: Invoked with /
+executable=
+N one shell=False args=tail /var/log/dmesg removes=None creates=None chdir=None
+Aug 31 17:19:01 vagrant-ubuntu-trusty-64 ansible-command: Invoked with /
+executable=
+None shell=False args=tail /var/log/messages removes=None creates=None chdir=None
+Aug 31 17:22:32 vagrant-ubuntu-trusty-64 ansible-command: Invoked with /
+executable=
+one shell=False args=tail /var/log/syslog removes=None creates=None chdir=None</pre>
+
+<p>We can see from this output that Ansible writes to the syslog as it runs.</p>
+
+<p>You aren&#8217;t just restricted to the <code>ping</code> and <code>command</code> modules when using the
+<code>ansible</code> command-line tool: you can use any module that you like.<a data-type="indexterm" data-primary="apt module" data-secondary="using with ansible command to install Nginx on Ubuntu"/><a data-type="indexterm" data-primary="ansible command" data-secondary="using any module"/><a data-type="indexterm" data-primary="Nginx" data-secondary="installing on Ubuntu"/> For example,
+you can install Nginx on Ubuntu by using the following command:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -b -m apt -a name=nginx</pre>
+<div data-type="tip">
+<p>If installing Nginx fails for you, you might need to update the package lists. To
+tell Ansible to do the equivalent of <code>apt-get update</code> before installing the
+package, change the argument from <code>name=nginx</code> to <code>"name=nginx update_cache=yes"</code>.</p>
+
+<p>You can restart Nginx as follows:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible testserver -b -m service -a "name=nginx \
+    state=restarted"</pre>
+</div>
+
+<p>We need the <code>-b</code> argument to become the root user because only root can install the Nginx package and restart services.<a data-type="indexterm" data-primary="test server for Ansible" data-startref="ix_testser"/><a data-type="indexterm" data-primary="servers" data-secondary="setting up a server for testing" data-startref="ix_serversetup"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Moving Forward</h1>
+
+<p>To recap, this introductory chapter covered the basic concepts of Ansible at a high level, including how it communicates with remote servers and how it
+differs from other configuration management tools. You&#8217;ve also seen how to use
+the <code>ansible</code> command-line tool to perform simple tasks on a single host.</p>
+
+<p>However, using <code>ansible</code> to run commands against single hosts isn&#8217;t terribly interesting.
+The next chapter covers playbooks, where the real action is.</p>
+</section>
+
+
+
+
+
+
+
+</section>

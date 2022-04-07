@@ -1,0 +1,490 @@
+
+[[Appendix]]
+[appendix]
+== SSH
+
+Because Ansible uses SSH as its transport mechanism, you'll need to understand
+some of SSH's features to take advantage of them with Ansible.((("SSH", id="ix_SSHref")))
+
+=== Native SSH
+
+By default, Ansible uses the native SSH client installed on your operating
+system. ((("SSH", "native SSH")))Ansible can take advantage of all the typical SSH features,
+including Kerberos and jump hosts. If you have an _~/.ssh/config_ file with
+custom configurations for your SSH setup, Ansible will respect these settings.
+
+[[SSH_AGENT]]
+=== SSH Agent
+
+A handy program called `ssh-agent` simplifies((("SSH", "ssh-agent", id="ix_SSHrefagnt"))) working with SSH private keys.
+
+////
+TODO: Explain how to run ssh-agent and the environment variables
+////
+
+
+When `ssh-agent` is running on your machine, you can add private
+keys to it by ((("ssh-add command")))using the +ssh-add+ command:
+
+
+----
+$ ssh-add /path/to/keyfile.pem
+----
+
+[NOTE]
+====
+The +SSH_AUTH_SOCK+ environment variable((("SSH_AUTH_SOCK environment variable"))) must be set, or the +ssh-add+ command will not be able to communicate with `ssh-agent`. See <<STARTING_UP_SSH_AGENT>>.
+====
+
+You can use the +-l+ or +L+ flag with the `ssh_add` program to see which keys have been
+added to your agent, as shown in <<SSH_ADD_L>>. This example shows that there
+are two keys in the agent.
+
+[[SSH_ADD_L]]
+.Listing the keys in the agent
+====
+----
+$ ssh-add -l
+2048 SHA256:o7H/I9rRZupXHJ7JnDi10RhSzeAKYiRVrlH9L/JFtfA /Users/lorin/.ssh/id_rsa
+2048 SHA256:xLTmHqvHHDIdcrHiHdtoOXxq5sm9DOEVi+/jnObkKKM insecure_private_key
+
+$ ssh-add -L
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDWAfog5tz4W9bPVbPDlNC8HWMfhjTgKOhpSZYI+clc
+ e3/pz5viqsHDQIjzSImoVzIOTV0tOIfE8qMkqEYk7igESccCy0zN9VnD6EfYVkEx1C+xqkCtZTEVuQn
+ d+4qyo222EAVkHm6bAhgyoA9nt9Um9WFO0045yHZL2Do9Z7KXTS4xOqeGF5vv7SiuKcsLjORPcWcYqC
+ fYdrdUdRD9dFq7zFKmpCPJqNwDQDrXbgaTOe+H6cu2f4RrJLp88WY8voB3zJ7avv68eOgah82dovSgw
+ hcsZp4SycZSTy+WqZQhzLogaifvtdgdzaooxNtsm+qRvQJyHkwdoXR6nJgt /Users/lorin/.ssh/i
+ d_rsa
+ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6NF8iallvQVp22WDkTkyrtvp9eWW6A8YVr+kz4TjGYe7
+ gHzIw+niNltGEFHzD8+v1I2YJ6oXevct1YeS0o9HZyN1Q9qgCgzUFtdOKLv6IedplqoPkcmF0aYet2P
+ kEDo3MlTBckFXPITAMzF8dJSIFo9D8HfdOV0IAdx4O7PtixWKn5y2hMNG0zQPyUecp4pzC6kivAIhyf
+ HilFR61RGL+GPXQ2MWZWFYbAGjyiYJnAmCP3NOTd0jMZEnDkbUvxhMmBYSdETk1rRgm+R4LOzFUGaHq
+ HDFIPKcF96hrucXzcWyLbIbEgE98OHlnVYCzRdK8jlqm8tehUc9c9WhQ== insecure_private_key
+
+----
+====
+
+When you try to make a connection to a remote host, and you have `ssh-agent` running, the SSH client will try to use the keys stored in `ssh-agent` to authenticate with the host.
+
+Using an SSH agent has several advantages:
+
+* The SSH agent makes it easier to work with encrypted SSH private keys. If you use an encrypted SSH private key, the private key file is protected with a password. When you use this key to make an SSH connection to a host, you will be prompted to type in the password. With an encrypted private key, even if somebody got access to your private SSH key, they wouldn't be able to use it without the password. If you use an encrypted SSH private key, and you aren't using an SSH agent, then you have to type in the encryption password each time you use the private key.  If you are using an SSH agent, you have to type the private-key password only when you add the key to the agent.
+
+* If you are using Ansible to manage hosts that use different SSH keys, using an SSH agent simplifies your Ansible configuration files; you don't have to explicitly specify the `ansible_private_key_file` on your hosts as we did back in <<FIRST_INVENTORY>>.
+
+* If you need to make an SSH connection from your remote host to a different host (e.g., cloning a private Git repository over SSH), you can take advantage of _agent forwarding_ so that you don't have to copy private SSH keys over to the remote host. We explain agent forwarding next.((("SSH", "ssh-agent", startref="ix_SSHrefagnt")))
+
+[[STARTING_UP_SSH_AGENT]]
+=== Starting Up ssh-agent
+
+How you start up the SSH agent varies depending on which operating system you're running.((("SSH", "ssh-agent", "starting up")))
+
+==== macOS
+
+macOS comes preconfigured to run `ssh-agent`, so there's nothing you
+need to do.((("macOS", "ssh-agent on")))
+
+==== Linux
+
+If you're running on Linux, you'll need to start up `ssh-agent` yourself and
+ensure that its environment variables are set correctly. ((("Linux", "starting up ssh-agent")))If you invoke `ssh-agent`
+directly, it will output the environment variables you'll need to set. For example:
+
+----
+$ ssh-agent
+SSH_AUTH_SOCK=/tmp/ssh-YI7PBGlkOteo/agent.2547; export SSH_AUTH_SOCK;
+SSH_AGENT_PID=2548; export SSH_AGENT_PID;
+echo Agent pid 2548;
+----
+
+You can automatically export these environment variables by invoking `ssh-agent`
+like this:
+
+----
+$ eval $(ssh-agent)
+----
+
+You'll also want to ensure that you have only one instance of `ssh-agent` running
+at a time. There are various helper tools on Linux, such as _Keychain_ and _Gnome Keyring_, for managing `ssh-agent` startup for you, or you can modify your
+_.profile_ file to ensure that `ssh-agent` starts up exactly once in each login
+shell. Configuring your account for `ssh-agent` is beyond the scope of this book, so
+I recommend you consult your Linux distribution's documentation for more details
+on how to set this up.
+
+[[SSH_AGENT_FORWARDING]]
+=== Agent Forwarding
+
+If you are cloning a Git repository over SSH, you'll need to use an SSH private key
+recognized by your Git server.((("agent forwarding", id="ix_agentfor")))((("SSH", "agent forwarding", id="ix_SSHrefagfor"))) I like to avoid copying private SSH keys
+to my hosts, in order to limit the damage in case a host ever gets
+compromised.
+
+One way to avoid copying SSH private keys around is to use the `ssh-agent` program
+on your local machine, with agent forwarding. If you SSH from your laptop to
+host _A_, and you have agent forwarding enabled, then agent forwarding allows you
+to SSH from host _A_ to host _B_ by using the private key that resides on your
+laptop.
+
+<<agent_forwarding_figure>> shows an example of agent forwarding in action. Let's say
+you want to check out a private repository from GitHub, using SSH. You have
+`ssh-agent` running on your laptop, and you've added your private key by using the
++ssh-add+ command.
+
+[[agent_forwarding_figure]]
+.Agent forwarding in action
+image::images/aur2_aa01.png["SSH with agent forwarding"]
+
+If you were manually SSHing to the app server, you would call the +ssh+ command with the +-A+ flag,
+which enables agent forwarding:
+
+----
+$ ssh -A myuser@myappserver.example.com
+----
+
+On the app server, you check out a Git repository by using an SSH URL:
+
+----
+$ git clone git@github.com:lorin/mezzanine-example.git
+----
+
+Git connects via SSH to GitHub. The GitHub SSH server tries to
+authenticate against the SSH client on the app server. The app server doesn't know your private key. However, because you enabled agent forwarding, the SSH client on the app server connects back to `ssh-agent` running on your laptop, which handles the authentication.
+
+There are a couple of issues you need to keep in mind in using agent forwarding with Ansible.
+
+First, you need to tell Ansible to enable agent forwarding when it connects to remote machines, because SSH does not enable agent forwarding by default. You can enable agent forwarding for all nodes you SSH to by adding the following lines to your _~/.ssh/config_ file on your control machine:
+
+----
+Host *
+    ForwardAgent yes
+----
+
+Or, if you want to enable agent forwarding for only a specific server, add this:
+
+----
+Host appserver.example.com
+    ForwardAgent yes
+----
+
+
+If, instead, you want to enable agent forwarding only for Ansible, you can
+edit your _ansible.cfg_ file by adding it to the +ssh_args+ parameter in the
++ssh_connection+ section:
+
+----
+[ssh_connection]
+ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o ForwardAgent=yes
+----
+
+Here, I used the more verbose +-o ForwardAgent=yes+ flag instead of the shorter
++-A+ flag, but it does the same thing.
+
+The +ControlMaster+ and +ControlPersist+ settings are needed for a performance
+optimization called _SSH multiplexing_. They are on by default, but if you
+override the +ssh_args+ variable, then you need to explicitly specify them or you
+will disable this performance boost. We discuss SSH multiplexing in
+<<connections-ssh>>.
+
+
+
+==== Sudo and Agent Forwarding
+
+
+////
+http://serverfault.com/questions/107187/ssh-agent-forwarding-and-sudo-to-another-user
+////
+
+When you enable agent forwarding, ((("agent forwarding", "sudo and")))((("SSH", "agent forwarding", "sudo and")))((("sudo utility", "agent forwarding and")))the remote machine sets the +SSH_AUTH_SOCK+ environment variable, which contains a path to a Unix-domain socket (e.g., _/tmp/ssh-FShDVu5924/agent.5924_). However, if you use +sudo+, the +SSH_AUTH_SOCK+ environment variable won't carry over unless you explicitly configure +sudo+ to allow this behavior.
+
+To allow the +SSH_AUTH_SOCK+ variable to carry over via +sudo+ to the root user, we can add the following line either to the _/etc/sudoers_ file or (on Debian-based distributions like Ubuntu) to its own file in the _/etc/sudoers.d_ directory:
+
+----
+Defaults>root env_keep+=SSH_AUTH_SOCK
+----
+
+Let's call this file _99-keep-ssh-auth-sock-env_ and put it in the files directory
+on our local machine.((("validation", "file validation")))
+
+[[validating_files_sidebar]]
+.Validating Files
+****
+
+The +copy+ and +template+ modules support a +validate+ clause. This clause lets you specify a program to run against the file that Ansible will generate. Use +%s+ as a placeholder for the filename. For example:
+
+----
+validate: visudo -cf %s
+----
+
+When the +validate+ clause is present, Ansible will copy the file to a temporary
+directory first and then run the specified validation program. If the
+validation program returns success (0), Ansible will copy the file from
+the temporary location to the proper destination. If the validation program returns a nonzero return
+code, Ansible will return an error that looks like this:
+
+[role="pagebreak-before"]
+----
+failed: [myhost] => {"checksum": "ac32f572f0a670c3579ac2864cc3069ee8a19588",
+"failed": true}
+msg: failed to validate: rc:1 error:
+
+FATAL: all hosts have already failed -- aborting
+----
+****
+
+Since a bad sudoers file on a host can prevent us from accessing the host as
+root, it's always a good idea to validate a sudoers file by using the _visudo_
+program.((("visudo program"))) For a cautionary tale about invalid sudoers files, see  Ansible
+contributor Jan-Piet Mens's blog post, http://bit.ly/1DfeQY7["Don't try this at
+the office: /etc/sudoers"].
+
+[source,yaml+jinja]
+----
+- name: copy the sudoers file so we can do agent forwarding
+  copy:
+    src: files/99-keep-ssh-auth-sock-env
+    dest: /etc/sudoers.d/99-keep-ssh-auth-sock-env
+    owner: root group=root mode=0440
+    validate: visudo -cf %s
+----
+
+Unfortunately, it's not currently possible to +sudo+ as a nonroot user and use agent forwarding. For example, let's say you want to +sudo+ from the +ubuntu+ user to a deploy user. The problem is that the Unix-domain socket pointed to the +SSH_AUTH_SOCK+ is owned by the +ubuntu+ user and won't be readable or writeable by the deploy user.
+
+As a workaround, you can always invoke the Git module as root and
+then change the permissions with the file module, as shown in <<cloning_as_root_and_changing_perms>>.
+
+[[cloning_as_root_and_changing_perms]]
+.Cloning as root and changing permissions
+====
+[source,yaml+jinja]
+----
+- name: verify the config is valid sudoers file
+  local_action: command visudo -cf files/99-keep-ssh-auth-sock-env
+  sudo: True
+
+- name: copy the sudoers file so we can do agent forwarding
+  copy:
+    src: files/99-keep-ssh-auth-sock-env
+    dest: /etc/sudoers.d/99-keep-ssh-auth-sock-env
+    owner: root
+    group: root
+    mode: "0440"
+    validate: 'visudo -cf %s'
+  sudo: True
+
+- name: check out my private git repository
+  git:
+    repo: git@github.com:lorin/mezzanine-example.git
+    dest: "{{ proj_path }}"
+  sudo: True
+
+- name: set file ownership
+  file:
+    path: "{{ proj_path }}"
+    state: directory
+    recurse: yes
+    owner: "{{ user }}"
+    group: "{{ user }}"
+  sudo: True
+
+----
+====
+
+[[HOST_KEY_CHECKING]]
+=== Host Keys
+
+Every host that runs an SSH server has an associated host key.((("agent forwarding", startref="ix_agentfor")))((("SSH", "agent forwarding", startref="ix_SSHrefagfor")))((("SSH", "host-key checking", id="ix_SSHrefhostkey")))((("host-key checking", id="ix_hostkey"))) The host key
+acts like a signature that uniquely identifies the host. Host keys exist to
+prevent man-in-the-middle attacks. If you're cloning a Git repository over SSH
+from GitHub, you don't know whether the server that claims to be
+_github.com_ is really GitHub's server, or is an impostor that used DNS spoofing
+to pretend to be _github.com_. Host keys allow you to
+check that the server claiming to be _github.com_ really is _github.com_. This
+means that you need to have the host key (a copy of what the signature should
+look like) before you try to connect to the host.
+
+Ansible will check the host key by default, although you can disable this
+behavior in _ansible.cfg_, like this:
+[source,ini]
+----
+[defaults]
+host_key_checking = False
+----
+
+Host-key checking also comes into play with the +git+ module. Recall in
+<<deploying_mezzanine>> how the +git+ module took an +accept_hostkey+ parameter:
+[source,yaml+jinja]
+----
+- name: check out the repository on the host
+  git: repo={{ repo_url }} dest={{ proj_path }} accept_hostkey=yes
+----
+
+The +git+ module can hang when cloning a Git repository by using the SSH protocol if host-key
+checking is enabled on the host and the Git server's SSH host key is not known
+to the host.
+
+The simplest approach is to use the +accept_hostkey+ parameter to tell Git to automatically accept the host key if it isn't known, which is the
+approach we use in <<check_out_repo_with_git>>.
+
+Many people simply accept the host key and don't worry about these types of
+man-in-the-middle attacks. That's what we did in our playbook, by specifying
++accept_hostkey=yes+ as an argument when invoking the +git+ module. However, if
+you are more security conscious and don't want to automatically accept the host
+key, you can manually retrieve and verify GitHub's host key, and then add
+it to the system-wide _/etc/ssh/known_hosts_ file or, for a specific user, to
+the user's _~/.ssh/known_hosts_ file.
+
+To manually verify GitHub's SSH host key,  you'll need to get
+the SSH host-key fingerprint from the Git server by using some kind of out-of-band
+channel. If you're using GitHub as your Git server, you can look up its
+http://bit.ly/1DffcxK[SSH key fingerprint] on the GitHub website.
+
+As of this writing, GitHub's base64-formatted SHA256 RSA fingerprint (newer format)footnote:[OpenSSH 6.8
+changed the default fingerprint format from hex MD5 to base64 SHA256.] is
++SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8+,
+and its hex-encoded MD5 RSA fingerprint (older format) is
++16:27:ac:a5:76:28:2d:36:63:1b:56:4d:eb:df:a6:48+, but don't take our word for it—go check the website.
+
+Next, you need to retrieve the full SSH host key. You can use the `ssh-keyscan` program
+to retrieve the host key associated with the host with hostname _github.com_. I
+like to put files that Ansible will deal with in the _files_ directory, so let's
+do that:
+
+----
+$ mkdir files
+$ ssh-keyscan github.com > files/known_hosts
+----
+
+The output looks like this:
+
+----
+github.com ssh-rsa
+AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccK
+rpp0yVhp5HdEIcKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQ
+NnPHt4EVVUh7VfDESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+
+weqqUUmpaaasXVal72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2Sm
+Vi/w4yCE6gbODqnTWlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==
+----
+
+For the more paranoid, the +ssh-keyscan+ command supports an +-H+ flag so
+that the hostname won't show up in the _known_hosts_ file. Even if somebody gets
+access to your known hosts file, they can't tell what the hostnames are. When
+using this flag, the output looks like this:
+
+----
+|1|BI+Z8H3hzbcmTWna9R4orrwrNrg=|wCxJf50pTQ83JFzyXG4aNLxEmzc= ssh-rsa AAAAB3NzaC1y
+c2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccKrpp0yVhp5HdEI
+cKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQNnPHt4EVVUh7Vf
+DESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+weqqUUmpaaasXVa
+l72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2SmVi/w4yCE6gbODqnT
+Wlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==
+----
+
+
+You then need to verify that the host key in the _files/known_hosts_ file matches the fingerprint((("known_hosts file"))) you found on GitHub. You can check with the `ssh-keygen` program:
+
+----
+$ ssh-keygen -lf files/known_hosts
+----
+
+The output should match the RSA fingerprint advertised on the website, like
+this:
+
+----
+2048 SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8 github.com (RSA)
+----
+
+Now that you are confident that you have the correct host key for your Git server, you can use the +copy+ module to copy it to _/etc/ssh/known_hosts_.
+[source,yaml+jinja]
+----
+- name: copy system-wide known hosts
+  copy: src=files/known_hosts dest=/etc/ssh/known_hosts owner=root group=root
+  mode=0644
+----
+
+Alternatively, you can copy it to a specific user's _~/.ssh/known_hosts_.
+<<adding_a_known_host>> shows how to copy the known hosts file from the
+control machine to the remote hosts.
+
+
+[[adding_a_known_host]]
+.Adding known host
+====
+[source,yaml+jinja]
+----
+- name: ensure the ~/.ssh directory exists
+  file: path=~/.ssh state=directory
+- name: copy known hosts file
+  copy: src=files/known_hosts dest=~/.ssh/known_hosts mode=0600
+----
+====
+
+[[badhostkey_sb]]
+.A Bad Host Key Can Cause Problems, Even with Key Checking Disabled
+****
+If you have disabled host-key checking in Ansible by setting +host_key_checking+
+to +false+ in your _ansible.cfg_ file, and the host key for the host that Ansible
+is trying to connect to does not match the key entry in
+your _~/.ssh/known_hosts_ file, then agent forwarding won't work. Trying to
+clone a Git repository will then result in an error that looks like this:
+
+----
+TASK: [check out the repository on the host] ********************************
+failed: [web] => {"cmd": "/usr/bin/git ls-remote git@github.com:lorin/
+mezzanine- example.git -h refs/heads/HEAD", "failed": true, "rc": 128}
+stderr: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+
+msg: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+
+FATAL: all hosts have already failed -- aborting
+----
+
+This can happen if you're using Vagrant, and you destroy a Vagrant machine and then create a new one, because the host key changes every time you create a new Vagrant machine. You can check whether agent forwarding is working by doing this:
+
+----
+$ ansible web -a "ssh-add -l"
+----
+
+[role="pagebreak-before"]
+If it's working, you'll see output like this:
+
+----
+web | success | rc=0 >>
+2048 SHA256:ScSt41+elNd0YkvRXW2nGapX6AZ8MP1J1UNg/qalBUs /Users/lorin/.ssh
+/id_rsa (RSA)
+----
+
+If it's not working, you'll see output like this:
+
+----
+web | FAILED | rc=2 >>
+Could not open a connection to your authentication agent.
+----
+
+If this happens to you, delete the appropriate entry from your
+_~/.ssh/known_hosts_ file.((("known_hosts file")))
+
+Note that because of SSH multiplexing, Ansible maintains an open SSH
+connection to the host for 60 seconds, and you need to wait for this connection to expire, or you won't see the effect of modifying the _known_hosts_ file.
+****
+
+Clearly, a lot more work is involved in verifying an SSH host key than blindly
+accepting it. As is often the case, there's a trade-off between security and
+convenience.((("host-key checking", startref="ix_hostkey")))((("SSH", "host-key checking", startref="ix_SSHrefhostkey")))((("SSH", startref="ix_SSHref")))
+
+////
+TODO:
+
+Kerberos
+
+Jump hosts
+
+////
+

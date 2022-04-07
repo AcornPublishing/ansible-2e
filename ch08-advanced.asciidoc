@@ -1,0 +1,1425 @@
+[[more_on_playbooks_a]]
+== Complex Playbooks
+
+In the preceding chapter, we went over a fully functional Ansible playbook for
+deploying the Mezzanine CMS.((("playbooks", "advanced features", id="ix_playbkadv"))) That example used some common Ansible
+features, but it didn't cover all of them. This chapter touches on those
+additional features, which makes it a bit of a grab bag.
+
+=== Dealing with Badly Behaved Commands: changed_when and failed_when
+
+Recall that in <<deploying_mezzanine>>, we avoided invoking the custom +createdb manage.py+ command, shown in <<django_manage_createdb>>, because the call wasn't idempotent.((("createdb command")))((("django-manage commands", "createdb")))((("playbooks", "advanced features", "dealing with badly behaved commands", id="ix_playbkadvcomm")))
+
+[[django_manage_createdb]]
+.Calling django manage.py createdb
+====
+[source,yaml+jinja]
+----
+- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+
+----
+====
+
+We got around this problem by invoking several +django manage.py+ commands that
+were idempotent, and that did the equivalent of +createdb+. But what if we didn't
+have a module that could invoke equivalent commands? The answer is to use
++changed_when+ and +failed_when+ clauses to change how Ansible identifies that a
+task has changed state or failed.((("changed_when clause")))((("failed_when clause")))
+
+First, we need to understand the output of this command the first time
+it's run, and the output when it's run the second time.
+
+Recall from <<variables_and_facts>> that to capture the output of a failed task, you add a +register+ clause to save the output to((("tasks", "failed", "capturing output of"))) a variable and a +failed_when: False+ clause so that the execution doesn't stop even if the module returns failure. Then add a +debug+ task to print out the variable, and finally a +fail+ clause so that the playbook stops executing, as shown in <<viewing_output_of_task>>.
+
+[[viewing_output_of_task]]
+.Viewing the output of a task
+====
+[source,yaml+jinja]
+----
+- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  failed_when: False
+  register: result
+
+- debug: var=result
+
+- fail:
+
+----
+====
+
+The output of the playbook when invoked the second time is shown in <<invoked_second_time>>.
+
+[[invoked_second_time]]
+.Returned values when database has already been created
+====
+[role="c_less_space"]
+----
+TASK: [debug var=result] ******************************************************
+ok: [default] => {
+    "result": {
+        "cmd": "python manage.py createdb --noinput --nodata",
+        "failed": false,
+        "failed_when_result": false,
+        "invocation": {
+            "module_args": '',
+            "module_name": "django_manage"
+        },
+        "msg": "\n:stderr: CommandError: Database already created, you probably
+want the syncdb or migrate command\n",
+        "path":
+"/home/vagrant/mezzanine_example/bin:/usr/local/sbin:/usr/local/bin:
+/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games",
+        "state": "absent",
+        "syspath": [
+            ``,
+            "/usr/lib/python2.7",
+            "/usr/lib/python2.7/plat-x86_64-linux-gnu",
+            "/usr/lib/python2.7/lib-tk",
+            "/usr/lib/python2.7/lib-old",
+            "/usr/lib/python2.7/lib-dynload",
+            "/usr/local/lib/python2.7/dist-packages",
+            "/usr/lib/python2.7/dist-packages"
+        ]
+    }
+}
+
+----
+====
+
+This is what happens when the task has been run multiple times. To see
+what happens the first time, delete the database and then have the playbook re-create it. The simplest way to do that is to run an Ansible ad hoc task that deletes the database:
+
+----
+$ ansible default --become --become-user postgres -m postgresql_db -a \
+"name=mezzanine_example state=absent"
+----
+
+Now when I run the playbook again, I get the output in <<invoked_first_time>>.
+
+[[invoked_first_time]]
+.Returned values when invoked the first time
+====
+----
+ASK: [debug var=result] ******************************************************
+ok: [default] => {
+    "result": {
+        "app_path": "/home/vagrant/mezzanine_example/project",
+        "changed": false,
+        "cmd": "python manage.py createdb --noinput --nodata",
+        "failed": false,
+        "failed_when_result": false,
+        "invocation": {
+            "module_args": '',
+            "module_name": "django_manage"
+        },
+        "out": "Creating tables ...\nCreating table auth_permission\nCreating
+table auth_group_permissions\nCreating table auth_group\nCreating table
+auth_user_groups\nCreating table auth_user_user_permissions\nCreating table
+auth_user\nCreating table django_content_type\nCreating table
+django_redirect\nCreating table django_session\nCreating table
+django_site\nCreating table conf_setting\nCreating table
+core_sitepermission_sites\nCreating table core_sitepermission\nCreating table
+generic_threadedcomment\nCreating table generic_keyword\nCreating table
+generic_assignedkeyword\nCreating table generic_rating\nCreating table
+blog_blogpost_related_posts\nCreating table blog_blogpost_categories\nCreating
+table blog_blogpost\nCreating table blog_blogcategory\nCreating table
+forms_form\nCreating table forms_field\nCreating table forms_formentry\nCreating
+table forms_fieldentry\nCreating table pages_page\nCreating table
+pages_richtextpage\nCreating table pages_link\nCreating table
+galleries_gallery\nCreating table galleries_galleryimage\nCreating table
+twitter_query\nCreating table twitter_tweet\nCreating table
+south_migrationhistory\nCreating table django_admin_log\nCreating table
+django_comments\nCreating table django_comment_flags\n\nCreating default site
+record: vagrant-ubuntu-trusty-64 ... \n\nInstalled 2 object(s) from 1
+fixture(s)\nInstalling custom SQL ...\nInstalling indexes ...\nInstalled 0
+object(s) from 0 fixture(s)\n\nFaking initial migrations ...\n\n",
+        "pythonpath": null,
+        "settings": null,
+        "virtualenv": "/home/vagrant/mezzanine_example"
+    }
+}
+----
+====
+
+Note that +changed+ is set to +false+ even though it did, indeed, change the
+state of the database. That's because the +django_manage+ module always returns
++changed=false+ when it runs commands that the module doesn't know about.
+
+We can add a +changed_when+ clause that looks for +"Creating tables"+ in the +out+ return value,((("changed_when clause"))) as shown in <<adding_changed_when_fail>>.
+
+[[adding_changed_when_fail]]
+.First attempt at adding changed_when
+====
+[source,yaml+jinja]
+----
+- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  register: result
+  changed_when: '"Creating tables" in result.out'
+
+----
+====
+
+The problem with this approach is that, if we look back at
+<<invoked_second_time>>, we see that there is no +out+ variable. Instead, there's a +msg+ variable. If we executed the playbook, we'd get the following (not terribly helpful) error the second time:
+
+----
+TASK: [initialize the database] ********************************************
+fatal: [default] => error while evaluating conditional: "Creating tables" in
+result.out
+----
+
+Instead, we need to ensure that Ansible evaluates +result.out+ only if that variable is defined. One way is to explicitly check whether the variable is
+defined:
+[source,yaml+jinja]
+----
+changed_when: result.out is defined and "Creating tables" in result.out
+----
+
+Alternatively, we could provide a default value for +result.out+ if it doesn't exist by using the Jinja2 +default+ filter:
+[source,yaml+jinja]
+----
+changed_when: '"Creating tables" in result.out|default("")'
+----
+
+The final idempotent((("createdb command", "idempotent manage.py createdb"))) task is shown in <<idempotent_createdb>>.
+
+
+[[idempotent_createdb]]
+.Idempotent manage.py createdb
+====
+[source,yaml+jinja]
+----
+- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  register: result
+  changed_when: '"Creating tables" in result.out|default("")'
+----
+====
+
+=== Filters
+
+_Filters_ are a feature of the Jinja2 templating engine.((("playbooks", "advanced features", "dealing with badly behaved commands", startref="ix_playbkadvcomm"))) Since Ansible
+uses Jinja2 for evaluating variables, as well as for templates, you can use filters inside +{{ braces }}+ in your playbooks, as well as inside your template files. ((("{{ }} (braces notation)", "filters in")))((("Jinja2 template engine", "filters", id="ix_Jinjafil")))((("filters", id="ix_filter")))((("playbooks", "advanced features", "filters", id="ix_playbkadvfil"))) Using filters resembles using Unix pipes, whereby a variable is piped through a filter. Jinja2 ships with a set of http://bit.ly/1FvOGzI[built-in filters].
+In addition, Ansible ships with its own filters to augment the http://bit.ly/1FvOIrj[Jinja2 filters].
+
+We'll cover a few sample filters here, but check out the official Jinja2 and Ansible docs for a complete list of the available filters.
+
+==== The Default Filter
+
+The +default+ filter is a useful one. ((("filters", "default")))((("default filter")))Here's an example of this filter in action:
+
+----
+"HOST": "{{ database_host | default('localhost') }}",
+----
+
+If the variable +database_host+ is defined, the braces will evaluate to the value of that variable. If the variable +database_host+ is not defined, the braces will evaluate to the string +localhost+. Some filters take arguments, and some don't.
+
+==== Filters for Registered Variables
+
+Let's say we want to run a task and print out its output, even if the task fails.((("variables", "registered, filters for")))((("filters", "for registered variables"))) However, if the task does fail, we want Ansible to fail for that host after printing the output. <<using_failed_filter>> shows how to use the +failed+ filter((("failed filter"))) in the argument to the +failed_when+ clause.((("failed_when clause")))
+
+[[using_failed_filter]]
+.Using the failed filter
+====
+[source,yaml+jinja]
+----
+- name: Run myprog
+  command: /opt/myprog
+  register: result
+  ignore_errors: True
+
+- debug: var=result
+
+- debug: msg="Stop running the playbook if myprog failed"
+  failed_when: result|failed
+# more tasks here
+
+----
+====
+
+
+<<table_return_value_filter>> shows a list of filters you can use on registered variables to check the status.((("tasks", "return value filters")))
+
+[[table_return_value_filter]]
+.Task return value filters
+[options="header"]
+|==============================================================================================
+|Name                    |Description
+|failed                  |True if a registered value is a task that failed
+|changed                 |True if a registered value is a task that changed
+|success                 |True if a registered value is a task that succeeded
+|skipped                 |True if a registered value is a task that was skipped
+|==============================================================================================
+
+
+==== Filters That Apply to File Paths
+
+<<table_filters_file_paths>> shows filters that are useful when a variable contains
+the path to a file on the control machine's filesystem.((("filters", "for file paths")))((("file paths, filters applying to")))((("paths", "filters applying to file paths")))
+
+
+[[table_filters_file_paths]]
+.File path filters
+[options="header"]
+|==============================================================================================
+|Name                    |Description
+|basename                |Base name of file path
+|dirname                 |Directory of file path
+|expanduser              |File path with +~+ replaced by home directory
+|realpath                |Canonical path of file path, resolves symbolic links
+|==============================================================================================
+Consider this playbook fragment:
+[source,yaml+jinja]
+----
+  vars:
+    homepage: /usr/share/nginx/html/index.html
+  tasks:
+  - name: copy home page
+    copy: src=files/index.html dest={{ homepage }}
+----
+
+Note that it references _index.html_ twice: once in the definition of the +homepage+ variable, and a second time to specify the path to the file on the control machine.((("basename filter")))
+
+The +basename+ filter will let us extract the _index.html_ part of the filename from the full path, allowing us to write the playbook without repeating the filename:footnote:[Thanks to John Jarvis for this tip.]
+[source,yaml]
+----
+  vars:
+    homepage: /usr/share/nginx/html/index.html
+  tasks:
+  - name: copy home page
+    copy: src=files/{{ homepage | basename }} dest={{ homepage }}
+----
+
+
+
+==== Writing Your Own Filter
+
+Recall that in our Mezzanine example, we generated the _local_settings.py_ file from a template, and a line in((("filters", "writing your own"))) the generated file looks like <<line_generated_by_template>>.
+
+[[line_generated_by_template]]
+.Line from local_settings.py generated by template
+====
+[source,python]
+----
+ALLOWED_HOSTS = ["www.example.com", "example.com"]
+----
+====
+
+We had a variable named `domains` that contained a list of the hostnames. We originally used a +for+ loop in our template to generate this line, but a filter would be an even more elegant approach.
+
+There is a built-in Jinja2 filter called +join+ that will join a list of strings with a delimiter such as a comma.(((""join filter in Jinja2"))) Unfortunately, it doesn't quite give us what we want. If we did this in the template:
+
+----
+ALLOWED_HOSTS = [{{ domains|join(", ") }}]
+----
+
+then we would end up with the strings ((("strings", "quoting, writing a filter for")))((("quotation marks", "filter for quoting strings")))unquoted in our file, as shown in
+<<strings_incorrectly_unquoted>>.
+
+[[strings_incorrectly_unquoted]]
+.Strings incorrectly unquoted
+====
+[source,python]
+----
+ALLOWED_HOSTS = [www.example.com, example.com]
+----
+====
+
+If we had a Jinja2 filter that quoted the strings in the list, as shown in <<quoting_strings_filter>>, then the template would generate the output depicted in <<line_generated_by_template>>.
+
+[[quoting_strings_filter]]
+.Using a filter to quote the strings in the list
+====
+----
+ALLOWED_HOSTS = [{{ domains|surround_by_quote|join(", ") }}]
+----
+====
+
+Unfortunately, there's no existing +surround_by_quote+ filter that does what we want.((("surround_by_quotes custom filter"))) However, we can write it ourselves. (In fact, Hanfei Sun on Stack Overflow covered http://stackoverflow.com/questions/15514365/[this very topic].)
+
+Ansible will look for custom filters in the _filter_plugins_ directory, relative to the directory containing your playbooks.((("filter_plugins directory")))
+
+<<surround_by_quotes>> shows what the filter implementation looks like.
+
+[[surround_by_quotes]]
+.filter_plugins/surround_by_quotes.py
+====
+[source,python]
+----
+# From http://stackoverflow.com/a/15515929/742
+
+def surround_by_quote(a_list):
+    return ['"%s"' % an_element for an_element in a_list]
+
+
+class FilterModule(object):
+    def filters(self):
+        return {'surround_by_quote': surround_by_quote}
+----
+====
+
+The +surround_by_quote+ function defines the Jinja2 filter. The +FilterModule+ class defines a +filters+ method that returns a dictionary with the name of the filter function and the function itself.((("FilterModule class, filters method"))) The +FilterModule+ class is Ansible-specific code that makes the Jinja2 filter available to Ansible.
+
+You can also place filter plugins in the _~/.ansible/plugins/filter_ directory, or the _/usr/share/ansible/plugins/filter_ directory, or you can specify the directory by setting the +ANSIBLE_FILTER_PLUGINS+ environment variable to the directory where your plugins are located.((("Jinja2 template engine", "filters", startref="ix_Jinjafil")))((("filters", startref="ix_filter")))((("playbooks", "advanced", "filters", startref="ix_playbkadvfil")))
+
+=== Lookups
+
+In an ideal world, all of your configuration information would be stored as Ansible variables, ((("variables")))in the various places that Ansible lets you define variables (e.g., the `vars` section of your playbooks, files loaded by `vars_files`, files in the _host_vars_ or _group_vars_
+directory that we discussed in <<inventory>>).((("playbooks", "advanced features", "lookups", id="ix_playbkadvLU")))((("lookups", id="ix_lookup")))
+
+Alas, the world is a messy place, and sometimes a piece of configuration data you need lives somewhere else.((("Don&#x27;t Repeat Yourself (DRY) principle"))) Maybe it's in a text file or a _.csv_ file, and you don't want to just copy the data into an Ansible variable file because now you have to maintain two copies of the same data, and you believe in the DRYfootnote:[Don't Repeat Yourself, a term popularized by <<pragprog,__The Pragmatic Programmer: From Journeyman to Master__>>, which is a fantastic book.] principle. ((("CoreOS project, etcd")))Or maybe the data isn't maintained as a file at all;
+it's maintained in ((("etcd (key-value store)")))a key-value storage service such as _etcd_.footnote:[etcd is a distributed key-value store maintained by the https://coreos.com/docs/etcd/[CoreOS project].] Ansible has a feature called _lookups_ that allows you to read in configuration data from various sources and then use that data in your playbooks and template.
+
+Ansible supports a collection of lookups for retrieving data from different
+sources.((("lookups", "available in Ansible"))) Some of
+the lookups are shown in <<lookups>>.
+
+[[lookups]]
+.Lookups
+[options="header"]
+|============================================================
+|Name                | Description
+|file                | Contents of a file
+|password            | Randomly generate a password
+|pipe                | Output of locally executed command
+|env                 | Environment variable
+|template            | Jinja2 template after evaluation
+|csvfile             | Entry in a _.csv_ file
+|dnstxt              | DNS TXT record
+|redis_kv            | Redis key lookup
+|etcd                | etcd key lookup
+|============================================================
+
+You invoke lookups by calling the +lookup+ function with two arguments.((("lookup function"))) The first is a string with the name of the lookup, and the second is a string that contains one or more arguments to pass to the lookup. For example, we call the +file+ lookup like this:
+
+----
+lookup('file', '/path/to/file.txt')
+----
+
+You can invoke lookups in your playbooks between +{{ braces }}+, or you can put them in templates.((("{{ }} (braces notation)", "lookups in")))
+
+In this section, I provided only a brief overview of lookups that are available. The Ansible documentation provides http://docs.ansible.com/playbooks_lookups.html[more details] on available lookups and how to use them.
+
+
+[NOTE]
+====
+All Ansible lookup plugins execute on the control machine, not the remote host.
+====
+
+==== file
+
+Let's say you have a text file on your control machine that contains a public SSH key that you want((("lookups", "file")))((("file lookup"))) to copy to a remote server. <<FILE_LOOKUP>> shows how to use the +file+ lookup to read the contents of a file and pass that as a parameter to a module.
+
+[[FILE_LOOKUP]]
+.Using the file lookup
+====
+[source,yaml+jinja]
+----
+- name: Add my public key as an EC2 key
+  ec2_key: name=mykey key_material="{{ lookup('file', \
+  '/Users/lorin/.ssh/id_rsa.pub') }}"
+
+----
+====
+
+You can invoke lookups in templates as well.((("template module", "invoking lookups"))) If we want to use the same technique to create an _authorized_keys_ file that contains the contents of a public-key file, we could create a Jinja2 template that invokes the lookup, as shown in <<authorized_keys_template>>, and then call the +template+ module in our playbook, as shown in <<authorized_keys_task>>.
+
+[[authorized_keys_template]]
+.authorized_keys.j2
+====
+----
+{{ lookup('file', '/Users/lorin/.ssh/id_rsa.pub') }}
+----
+====
+
+[[authorized_keys_task]]
+.Task to generate authorized_keys
+====
+[source,yaml+jinja]
+----
+- name: copy authorized_host file
+  template: src=authorized_keys.j2 dest=/home/deploy/.ssh/authorized_keys
+
+----
+====
+
+==== pipe
+
+The +pipe+ lookup invokes an external program on the control machine and evaluates to the program's output on standard out.((("pipe lookup")))((("lookups", "pipe")))
+
+For example, if our playbooks are version controlled using +git+, and we want to get the +SHA-1+ value of the most recent +git commit+,footnote:[If this sounds like gibberish, don't worry about it; it's just an example of running a command.] we could use the +pipe+ lookup:
+[source,yaml+jinja]
+----
+- name: get SHA of most recent commit
+  debug: msg="{{ lookup('pipe', 'git rev-parse HEAD') }}"
+----
+
+The output looks something like this:
+
+----
+TASK: [get the sha of the current commit] *************************************
+ok: [myserver] => {
+    "msg": "e7748af0f040d58d61de1917980a210df419eae9"
+}
+----
+
+==== env
+
+The +env+ lookup retrieves the value of an environment variable set on the control machine.((("env lookup")))((("lookups", "env"))) For example, we could use the lookup like this:
+[source,yaml+jinja]
+----
+- name: get the current shell
+  debug: msg="{{ lookup('env', 'SHELL') }}"
+----
+
+Since I use Zsh as my shell,((("Zsh shell"))) the output looks like this when I run it:
+
+----
+TASK: [get the current shell] *************************************************
+ok: [myserver] => {
+    "msg": "/bin/zsh"
+}
+----
+
+==== password
+
+The +password+ lookup evaluates to a random password, and it will also write the password to a file specified in the argument.((("password lookup")))((("lookups", "password")))((("PostgreSQL", "creating deploy user"))) For example, if we want to create a Postgres user named `deploy` with a random password and write that password to _deploy-password.txt_ on the control machine, we can do this:
+[source,yaml+jinja]
+----
+- name: create deploy postgres user
+  postgresql_user:
+    name: deploy
+    password: "{{ lookup('password', 'deploy-password.txt') }}"
+----
+
+==== template
+
+The +template+ lookup lets you specify a Jinja2 template file, and then returns the result of evaluating the template.((("Jinja2 template engine", "template lookup")))((("template lookup")))((("lookups", "template"))) Say we have a template that looks like <<message_j2>>.
+
+[[message_j2]]
+.message.j2
+====
+----
+This host runs {{ ansible_distribution }}
+----
+====
+
+If we define a task like this:
+[source,yaml+jinja]
+----
+- name: output message from template
+  debug: msg="{{ lookup('template', 'message.j2') }}"
+----
+
+then we'll see output that looks like this:
+
+----
+TASK: [output message from template] ******************************************
+ok: [myserver] => {
+    "msg": "This host runs Ubuntu\n"
+}
+----
+
+==== csvfile
+
+The +csvfile+ lookup reads an entry from a _.csv_ file.((("csvfile lookup")))((("lookups", "csvfile"))) Assume we have a _.csv_ file that looks like <<example_csv_file>>.
+
+[[example_csv_file]]
+.users.csv
+====
+----
+username,email
+lorin,lorin@ansiblebook.com
+john,john@example.com
+sue,sue@example.org
+
+----
+====
+
+If we want to extract Sue's email address by using the +csvfile+ lookup plugin, we would invoke the lookup plugin like this:
+
+----
+lookup('csvfile', 'sue file=users.csv delimiter=, col=1')
+----
+
+The +csvfile+ lookup is a good example of a lookup that takes multiple arguments.((("csvfile lookup", "multiple arguments"))) Here, four arguments are being passed to the plugin:
+
+[role="pagebreak-before"]
+* +sue+
+* +file=users.csv+
+* +delimiter=,+
+* +col=1+
+
+
+////
+Probably need to move this note
+////
+
+
+You don't specify a name for the first argument to a lookup plugin, but you do specify names for the additional arguments. In the case of +csvfile+, the first argument is an entry that must appear exactly once in column 0 (the first column, 0-indexed) of the table.
+
+The other arguments specify the name of the _.csv_ file, the delimiter, and which column should be returned. In our example, we want to look in the file named _users.csv_ and locate where the fields are delimited by commas, look up the row where the value in the first column is `sue`, and return the value in the second column (column 1, indexed by 0). This evaluates to pass:[<em>sue@example.org</em>].
+
+If the username we want to look up is stored in a variable named +username+, we could construct the argument string by using the `+` sign to concatenate the +username+ string with the rest of the argument string:
+
+----
+lookup('csvfile', username + ' file=users.csv delimiter=, col=1')
+----
+
+==== dnstxt
+
+[NOTE]
+====
+The +dnstxt+ module requires that you install the _dnspython_ Python package on the control machine.((("dnstext lookup")))
+====
+
+If you're reading this book, you're probably aware of what the Domain Name System (DNS) does, but just in case you aren't, DNS is the service that translates hostnames such as _ansiblebook.com_ to IP addresses such as _64.99.80.30_.((("hostnames", "translation to IP addresses by DNS")))((("DNS")))
+
+DNS works by associating one or more records with a hostname. The most commonly used types of DNS records are _A_ records and _CNAME_ records, which associate a hostname with an IP address (A record) or specify that a hostname is an alias for another hostname (CNAME record).((("A records (DNS)")))((("CNAME records (DNS)")))
+
+The DNS protocol supports another type of record that you can associate with a hostname, called a _TXT_ record.((("TXT records (DNS)"))) A TXT record is just an arbitrary string that you can attach to a hostname. Once you've associated a TXT record with a hostname, anybody can retrieve the text by using a DNS client.
+
+For example, I own the _ansiblebook.com_ domain, so I can create TXT records associated with any hostnames in that domain.footnote:[DNS service providers typically have web interfaces to let you perform DNS-related tasks such as creating TXT records.] I associated a TXT record with the _ansiblebook.com_ hostname that contains the ISBN number for this book. You can look up the TXT record by using ((("dig tool, looking up DNS TXT records")))the +dig+ command-line tool, as shown in <<txt_record>>.
+
+[[txt_record]]
+.Using the dig tool to look up a TXT record
+====
+[source,console]
+----
+$ dig +short ansiblebook.com TXT
+"isbn=978-1491979808"
+----
+====
+
+The +dnstxt+ lookup queries the DNS server for the TXT record associated with the host. If we create a task like this in a playbook:
+[source,yaml+jinja]
+----
+- name: look up TXT record
+  debug: msg="{{ lookup('dnstxt', 'ansiblebook.com') }}"
+----
+
+the output will look like this:
+
+----
+TASK: [look up TXT record] ****************************************************
+ok: [myserver] => {
+    "msg": "isbn=978-1491979808"
+}
+----
+
+If multiple TXT records are associated with a host, the module will concatenate them together, and it might do this in a different order each time it is called. For example, if there were a second TXT record on _ansiblebook.com_ with this text:
+
+----
+author=lorin
+----
+
+then the _dnstxt_ lookup would randomly return one of the two:
+
+* +isbn=978-1491979808author=lorin+
+* +author=lorinisbn=978-1491979808+
+
+==== redis_kv
+
+[NOTE]
+====
+The +redis_kv+ module requires that you install the _redis_ Python package on the control machine.((("Python", "redis package")))((("redis_kv module")))
+====
+
+Redis is a popular key-value store,((("Redis"))) commonly used as a cache, as well as a data store for job queue services such as Sidekiq.((("lookups", "redis_kv")))((("key-value stores", "Redis"))) You can use the +redis_kv+ lookup to retrieve the value of a key. The key must be a string, as the module does the equivalent of calling the Redis `GET` command.
+
+For example, let's say that we have a Redis server running on our control machine, and we set the key +weather+ to the value +sunny+, by doing something like this:
+[source,console]
+----
+$ redis-cli SET weather sunny
+----
+
+If we define a task in our playbook that invokes the Redis lookup:
+[source,yaml+jinja]
+----
+- name: look up value in Redis
+  debug: msg="{{ lookup('redis_kv', 'redis://localhost:6379,weather') }}"
+----
+
+the output will look like this:
+
+----
+TASK: [look up value in Redis] ************************************************
+ok: [myserver] => {
+    "msg": "sunny"
+}
+----
+
+The module will default to __redis://localhost:6379__ if the URL isn't specified,
+so we could invoke the module like this instead (note the comma before the
+key):
+
+----
+lookup('redis_kv', ',weather')
+----
+
+==== etcd
+
+Etcd is a distributed key-value store, commonly used for keeping configuration
+data and for implementing service discovery.((("etcd (key-value store)")))((("key-value stores", "etcd")))((("etcd lookup")))((("lookups", "etcd"))) You can use the +etcd+ lookup to
+retrieve the value of a key.
+
+For example, let's say that we have an +etcd+ server running on our control machine, and we set the key +weather+ to the value +cloudy+ by doing something like this:
+[source,console]
+----
+$ curl -L http://127.0.0.1:4001/v2/keys/weather -XPUT -d value=cloudy
+----
+
+If we define a task in our playbook that invokes the +etcd+ plugin:
+[source,yaml+jinja]
+----
+- name: look up value in etcd
+  debug: msg="{{ lookup('etcd', 'weather') }}"
+----
+
+The output looks like this:
+
+----
+TASK: [look up value in etcd] *************************************************
+ok: [localhost] => {
+    "msg": "cloudy"
+}
+----
+
+By default, the +etcd+ lookup looks for the etcd server at pass:[<em>http://127.0.0.1:4001</em>], but you can change this by setting the +ANSIBLE_ETCD_URL+ environment variable before invoking `ansible-playbook`.((("ANSIBLE_ETCD_URL environment variable")))
+
+==== Writing Your Own Lookup Plugin
+
+You can also write your own lookup plugin if you need functionality not provided by the existing plugins.((("lookups", "writing your own plugin"))) Writing a custom lookup plugin is out of scope for this book, but if you're really interested, I suggest that you take a look at the source code for the lookup https://github.com/ansible/ansible/tree/devel/lib/ansible/plugins/lookup[plugins that ship with Ansible].
+
+Once you've written your lookup plugin, place it in one of the following directories:
+
+ * The _lookup_plugins_ directory next to your playbook
+ * _~/.ansible/plugins/lookup_
+ * _/usr/share/ansible/plugins/lookup_
+ * The directory specified in your +ANSIBLE_LOOKUP_PLUGINS+ environment variable((("ANSIBLE_LOOKUP_PLUGINS environment variable")))((("playbooks", "advanced features", "lookups", startref="ix_playbkadvLU")))((("lookups", startref="ix_lookup")))
+
+
+=== More Complicated Loops
+
+Up until this point, whenever we've written a task that iterates over a list of items, we've used the +with_items+ clause to specify a list of items.((("playbooks", "advanced features", "more complicated loops", id="ix_playbkadvloop")))((("loops", "more complicated", id="ix_loopcomp"))) Although this is the most common way to do loops, Ansible supports other mechanisms for iteration. <<looping_constructs>> provides a summary of the constructs that are available.((("loops", "more complicated", "available looping constructs in Ansible")))
+
+
+[[looping_constructs]]
+.Looping constructs
+[options="header"]
+|===================================================================================
+|Name                     | Input                | Looping strategy
+|with_items               | List                 | Loop over list elements
+|with_lines               | Command to execute   | Loop over lines in command output
+|with_fileglob            | Glob                 | Loop over filenames
+|with_first_found         | List of paths        | First file in input that exists
+|with_dict                | Dictionary           | Loop over dictionary elements
+|with_flattened           | List of lists        | Loop over flattened list
+|with_indexed_items       | List                 | Single iteration
+|with_nested              | List                 | Nested loop
+|with_random_choice       | List                 | Single iteration
+|with_sequence            | Sequence of integers | Loop over sequence
+|with_subelements         | List of dictionaries | Nested loop
+|with_together            | List of lists        | Loop over zipped list
+|with_inventory_hostnames | Host pattern         | Loop over matching hosts
+|===================================================================================
+
+
+The http://bit.ly/1F6kfCP[official documentation] covers these quite thoroughly, so I'll show examples from just a few of them to give you a sense of how they work.
+
+==== with_lines
+
+The +with_lines+ looping construct lets you run an arbitrary command on your control machine and iterate over the output, one line at a time.((("with_lines looping construct")))((("loops", "more complicated", "with_lines construct")))
+
+Imagine you have a file that contains a list of names, and you want to send a Slack message for each name, something like this:
+
+----
+Leslie Lamport
+Silvio Micali
+Shafi Goldwasser
+Judea Pearl
+----
+
+
+<<WITH_LINES>> shows how to use +with_lines+ to read a file and
+iterate over its contents line by line.
+
+[[WITH_LINES]]
+.Using with_lines as a loop
+====
+[source,yaml+jinja]
+----
+- name: Send out a slack message
+  slack:
+    domain: example.slack.com
+    token: "{{ slack_token }}"
+    msg: "{{ item }} was in the list"
+  with_lines:
+    - cat files/turing.txt
+
+----
+====
+
+==== with_fileglob
+
+The +with_fileglob+ construct is useful for iterating over a set of files on the control machine.((("loops", "more complicated", "with_fileglob construct")))((("with_fileglob looping construct")))
+
+
+<<WITH_FILEGLOB>> shows how to iterate over files that end in _.pub_ in the _/var/keys_ directory, as well as a _keys_ directory next to your playbook. It then uses the +file+ lookup plugin to extract the contents of the file, which are passed to the +authorized_key+ module.
+
+
+[[WITH_FILEGLOB]]
+.Using with_fileglob to add keys
+====
+[source,yaml+jinja]
+----
+- name: add public keys to account
+  authorized_key: user=deploy key="{{ lookup('file', item) }}"
+  with_fileglob:
+    - /var/keys/*.pub
+    - keys/*.pub
+
+----
+====
+
+==== with_dict
+
+The +with_dict+ construct lets you iterate over a dictionary instead of a list.((("dictionaries", "iteration over, using with_dict")))((("loops", "more complicated", "with_dict construct")))((("with_dict looping construct"))) When you use this looping construct, the +item+ loop variable is a dictionary with two keys:
+
+key:: One of the keys in the dictionary
+value:: The value in the dictionary that corresponds to _key_
+
+For example, if your host has an `eth0` interface, there will be an Ansible fact named +ansible_eth0+, with a key named `ipv4` that contains a dictionary that looks something like this:
+[source,json]
+----
+{
+ "address": "10.0.2.15",
+ "netmask": "255.255.255.0",
+ "network": "10.0.2.0"
+}
+----
+
+We could iterate over this dictionary and print out the entries one at a time:
+[source,yaml+jinja]
+----
+ - name: iterate over ansible_eth0
+    debug: msg={{ item.key }}={{ item.value }}
+    with_dict: "{{ ansible_eth0.ipv4 }}"
+----
+
+The output looks like this:
+
+----
+TASK: [iterate over ansible_eth0] *********************************************
+ok: [myserver] => (item={'key': u'netmask', 'value': u'255.255.255.0'}) => {
+    "item": {
+        "key": "netmask",
+        "value": "255.255.255.0"
+    },
+    "msg": "netmask=255.255.255.0"
+}
+ok: [myserver] => (item={'key': u'network', 'value': u'10.0.2.0'}) => {
+    "item": {
+        "key": "network",
+        "value": "10.0.2.0"
+    },
+    "msg": "network=10.0.2.0"
+}
+ok: [myserver] => (item={'key': u'address', 'value': u'10.0.2.15'}) => {
+    "item": {
+        "key": "address",
+        "value": "10.0.2.15"
+    },
+    "msg": "address=10.0.2.15"
+}
+----
+
+==== Looping Constructs as Lookup Plugins
+
+Ansible implements looping constructs as lookup plugins.((("lookups", "looping constructs as lookup plugins")))((("loops", "more complicated", "looping constructs as lookup plugins"))) You just slap a +with+ at the beginning of a lookup plugin to use it in its loop form. ((("file lookup", "with_file form, using")))For example, we can rewrite <<FILE_LOOKUP>> by using the +with_file+ form in <<ex-7-26>>.
+
+[[ex-7-26]]
+.Using the file lookup as a loop
+====
+[source,yaml+jinja]
+----
+- name: Add my public key as an EC2 key
+  ec2_key: name=mykey key_material="{{ item }}"
+  with_file: /Users/lorin/.ssh/id_rsa.pub
+
+----
+====
+
+Typically, you use a lookup plugin as a looping construct only if it returns a
+list, which is how I was able to separate out the plugins into <<lookups>>
+(return strings) and <<looping_constructs>> (return lists).((("loops", "more complicated", startref="ix_loopcomp")))((("playbooks", "advanced features", "more complicated loops", startref="ix_playbkadvloop")))
+
+=== Loop Controls
+
+With version 2.1, Ansible provides users with more control over loop handling.((("playbooks", "advanced features", "loop controls", id="ix_playbkadvlctrl")))((("loops", "controls", id="ix_loopctrl")))
+
+==== Setting the Variable Name
+
+The `loop_var` control allows us to give the iteration variable a different name((("loops", "controls", "setting variable name")))((("loop_var control")))((("variables", "loop, setting name of"))) than the default name, `item`, as shown in <<loop_control_loop_var_user>>.
+
+[[loop_control_loop_var_user]]
+.Use user as loop variable
+====
+[source,yaml+jinja]
+----
+- user:
+    name: "{{ user.name }}"
+  with_items:
+    - { name: gil }
+    - { name: sarina }
+    - { name: leanne }
+  loop_control:
+    loop_var: user
+----
+====
+
+Although in <<loop_control_loop_var_user>> `loop_var` provides only a cosmetic improvement, it can be essential for more advanced loops.
+
+In <<loop_control_loop_var>>, we would like to loop over multiple tasks at once. One way to achieve that is to use `include` with `with_items`.((("with_items clause", "using with include")))((("includes", "using include and with_items")))
+
+However, the _vhosts.yml_ file that is going to be included may also contain `with_items` in some tasks. This would produce a conflict, as the default `loop_var` `item` is used for _both_ loops at the same time.
+
+To prevent a naming collision, we specify a different name for `loop_var` in the outer loop.
+
+[[loop_control_loop_var]]
+.Use vhost as loop variable
+====
+[source,yaml+jinja]
+----
+- name: run a set of tasks in one loop
+  include: vhosts.yml
+  with_items:
+    - { domain: www1.example.com }
+    - { domain: www2.example.com }
+    - { domain: www3.example.com }
+  loop_control:
+    loop_var: vhost // <1>
+----
+<1> Change the loop variable name for outer loops to prevent name collisions.
+====
+
+In the included task file _vhosts.yml_ you see in <<loop_control_loop_var_included>>, we are now able to use the default `loop_var` name `item` as we used to do.
+
+[[loop_control_loop_var_included]]
+.Included file can contain a loop
+====
+[source,yaml+jinja]
+----
+- name: create nginx directories
+  file:
+    path: /var/www/html/{{ vhost.domain }}/{{ item }} // <1>
+  state: directory
+  with_items:
+    - logs
+    - public_http
+    - public_https
+    - includes
+
+- name: create nginx vhost config
+  template:
+    src: "{{ vhost.domain }}.j2"
+    dest: /etc/nginx/conf.d/{{ vhost.domain }}.conf
+----
+<1> We keep the default loop variable in the inner loop.
+====
+
+==== Labeling the Output
+
+The `label` control was added in Ansible 2.2 and provides some control over how the loop output will be shown to the user during execution.((("label control")))((("loops", "controls", "labeling output")))
+
+The following example contains an ordinary list of dictionaries:
+
+[source,yaml+jinja]
+.vhost.yml
+----
+- name: create nginx vhost configs
+  template:
+    src: "{{ item.domain }}.conf.j2"
+    dest: "/etc/nginx/conf.d/{{ item.domain }}.conf
+  with_items:
+    - { domain: www1.example.com, ssl_enabled: yes }
+    - { domain: www2.example.com }
+    - { domain: www3.example.com, 
+      aliases: [ edge2.www.example.com, eu.www.example.com ] }
+----
+
+By default, Ansible prints the entire dictionary in the output. For larger dictionaries, the output can be difficult to read without a `loop_control` clause that specifies a label:
+
+----
+TASK [create nginx vhost configs] **********************************************
+ok: [localhost] => (item={u'domain': u'www1.example.com', u'ssl_enabled': True})
+ok: [localhost] => (item={u'domain': u'www2.example.com'})
+ok: [localhost] => (item={u'domain': u'www3.example.com', u'aliases': 
+[u'edge2.www.example.com', u'eu.www.example.com']})
+----
+
+Since we are interested only in the domain names, we can simply add a _label_ in the `loop_control` clause describing what should be printed when we iterate over the items:
+
+[source,yaml+jinja]
+.vhost.yml
+----
+- name: create nginx vhost configs
+  template:
+    src: "{{ item.domain }}.conf.j2"
+    dest: "/etc/nginx/conf.d/{{ item.domain }}.conf"
+  with_items:
+    - { domain: www1.example.com, ssl_enabled: yes }
+    - { domain: www2.example.com }
+    - { domain: www3.example.com, 
+      aliases: [ edge2.www.example.com, eu.www.example.com ] }
+  loop_control:
+    label: "for domain {{ item.domain }}" // <1>
+----
+<1> Adding a custom +label+
+
+This results in much more readable output:
+
+----
+TASK [create nginx vhost configs] **********************************************
+ok: [localhost] => (item=for domain www1.example.com)
+ok: [localhost] => (item=for domain www2.example.com)
+ok: [localhost] => (item=for domain www3.example.com)
+----
+
+[WARNING]
+====
+Keep in mind that running in verbose mode `-v` will show the full dictionary; don't use it to hide your passwords! Set `no_log: true` on the task instead.
+====
+
+=== Includes
+
+The `include` feature allows you to include tasks or even whole playbooks, depending on where you define an include.((("playbooks", "advanced features", "loop controls", startref="ix_playbkadvlctrl")))((("loops", "controls", startref="ix_loopctrl"))) It is often used in roles to separate or even group tasks and task arguments to each task in the included file.((("playbooks", "advanced features", "includes", id="ix_playbkadvinc")))((("includes", id="ix_incl")))
+
+Let's consider an example. <<WITHOUT_INCLUDE>> contains two tasks of a play that share an identical `tag`, a `when` condition, and a `become` argument.((("tasks", "with identical arguments, without includes")))
+
+[[WITHOUT_INCLUDE]]
+.Identical arguments
+====
+[source,yaml+jinja]
+.play.yml
+----
+- name: install nginx
+  package:
+    name: nginx
+  tags: nginx // <1>
+  become: yes // <2>
+  when: ansible_os_family == 'RedHat' // <3>
+
+- name: ensure nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+  tags: nginx // <1>
+  become: yes // <2>
+  when: ansible_os_family == 'RedHat' // <3>
+----
+<1> Identical +tags+
+<2> Identical +become+
+<3> Identical condition
+====
+
+
+When we separate these two tasks in a file as in <<WITH_INCLUDE_SEPARATE_TASKS>> and use `include` as in <<WITH_INCLUDE>>, we can simplify the play by adding the task arguments((("tasks", "with identical arguments, with includes"))) only to the `include` task.
+
+[[WITH_INCLUDE_SEPARATE_TASKS]]
+.Separate tasks into a different file
+====
+[source,yaml+jinja]
+.nginx_include.yml
+----
+- name: install nginx
+  package:
+    name: nginx
+
+- name: ensure nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+----
+====
+
+[[WITH_INCLUDE]]
+.Using an include for the tasks file applying the arguments in common
+====
+[source,yaml+jinja]
+.include.yml
+----
+- include: nginx_include.yml
+  tags: nginx
+  become: yes
+  when: ansible_os_family == 'RedHat'
+----
+====
+
+==== Dynamic Includes
+
+A common pattern in roles is to define tasks specific to a particular operating system into separate task files.((("includes", "dynamic")))((("dynamic includes"))) Depending on the number of operating systems supported by the role, this can lead to a lot of boilerplate for the +include+ tasks.
+
+[source,yaml+jinja]
+.include.yml
+----
+- include: Redhat.yml
+  when: ansible_os_family == 'Redhat'
+
+- include: Debian.yml
+  when: ansible_os_family == 'Debian'
+----
+
+Since version 2.0, Ansible allows((("variable substitution, using for dynamic includes"))) us to dynamically include a file by using variable substitution:
+
+[source,yaml+jinja]
+.include.yml
+----
+- include: "{{ ansible_os_family }}.yml"
+  static: no
+----
+
+However, there((("ansible-playbook --list-tasks command", "dynamic includes and")))((("tasks", "from dynamic includes, listing with ansible-playbook"))) is a drawback to using dynamic includes: `ansible-playbook --list-tasks` might not list the tasks from a dynamic include if Ansible does not have enough information to populate the variables that determine which file will be included. For example, fact variables (see <<variables_and_facts>>) are not populated when the pass:[<span class="keep-together"><code>--list-tasks</code></span>] argument is used.
+
+==== Role Includes
+
+A special include is the `include_role` clause.((("roles", "include_role clause")))((("includes", "role")))((("include_role clause"))) In contrast with the `role` clause, which will use all parts of the role, the `include_role` not only allows us to selectively choose what parts of a role will be included and used, but also where in the play.
+
+Similarly to the `include` clause, the mode can be static or dynamic, and Ansible does a best guess as to what is needed. However, we can always append `static` to enforce the desired mode.
+
+[source,yaml+jinja]
+----
+- name: install nginx
+  yum:
+    pkg: nginx
+
+- name: install php
+  include_role:
+    name: php // <1>
+
+- name: configure nginx
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+
+----
+<1> Include and run _main.yml_ from the `php` role.
+
+[NOTE]
+====
+The `include_role` clause makes the handlers available as well.
+====
+
+The `include_role` clause can also help to avoid the hassle of parts of roles depending on each other.((("dependent roles", "include_role clause and"))) Imagine that in the role dependency, which runs before the main role, a file task changes the owner of a file. But the system user used as the owner does not yet exist at that point. It will be created later in the main role during a package pass:[<span class="keep-together">installation</span>].
+
+[source,yaml+jinja]
+----
+- name: install nginx
+  yum:
+    pkg: nginx
+
+- name: install php
+  include_role:
+    name: php
+    tasks_from: install // <1>
+
+- name: configure nginx
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+
+- name: configure php
+  include_role:
+    name: php
+    tasks_from: configure // <2>
+
+----
+<1> Include and run _install.yml_ from the `php` role.
+<2> Include and run _configure.yml_ from the `php` role.
+
+[NOTE]
+====
+At the time of writing, the `include_role` clause is still labeled as _preview_,  which means there is no guarantee of a backward-compatible interface.
+====
+
+=== Blocks
+
+Much like the `include` clause, the `block` clause provides a mechanism for grouping tasks.((("playbooks", "advanced features", "includes", startref="ix_playbkadvinc")))((("includes", startref="ix_incl")))((("blocks")))((("playbooks", "advanced features", "blocks"))) The `block` clause allows you to set conditions or arguments for all tasks within a block at once:
+
+[role="pagebreak-before"]
+[source,yaml+jinja]
+.block.yml
+----
+- block:
+  - name: install nginx
+    package:
+      name: nginx
+  - name: ensure nginx is running
+    service:
+      name: nginx
+      state: started
+      enabled: yes
+  become: yes
+  when: "ansible_os_family == 'RedHat'"
+----
+
+[NOTE]
+====
+Unlike an `include` clause, looping over a `block` clause is currently not supported.
+====
+
+The `block` clause has an even more interesting application: error handling.
+
+=== Error Handling with Blocks
+
+Dealing with error scenarios has always been a challenge.((("blocks", "error handling with", id="ix_blockerr")))((("error handling with blocks", id="ix_errblock")))((("playbooks", "advanced features", "error handling with blocks", id="ix_playbkadverr"))) Historically, Ansible has been error agnostic in the sense that errors and failures may occur on a host. Ansible's default error-handling behavior is to take a host out of the play if a task fails and continue as long as there are hosts remaining that haven't encountered errors.
+
+In combination with the `serial` and `max_fail_percentage` clause, Ansible gives you some control over when a play has to be declared as failed.((("plays", "declaring as failed")))((("max_fail_percentage clause")))((("serial clause")))
+
+With the `blocks` clause as shown in <<appupgrade_yml>>, Ansible advances error handling a bit further and lets us automate recovery and rollback of tasks in case of a failure.
+
+[[appupgrade_yml]]
+.app-upgrade.yml
+====
+[source,yaml+jinja]
+----
+---
+- block: // <1>
+  - debug: msg="You will see a failed tasks right after this"
+  - command: /bin/false
+  - debug: "You won't see this message"
+  rescue: // <2>
+  - debug: "You only see this message in case of an failure in the block"
+  always: // <3>
+  - debug: "This will be always executed"
+----
+====
+<1> Start of the `block` clause
+<2> Tasks to be executed in case of a failure in `block` clause
+<3> Tasks to always be executed
+
+
+If you have some programming experience, the way error handling is implemented may remind you of the _try-catch-finally_ paradigm, and it works much the same way.
+
+To demonstrate how this can work, we start with a daily business job: upgrading an application. The application is distributed in a cluster of virtual machines (VMs) and deployed on an IaaS cloud (http://cloudstack.apache.org[Apache CloudStack]).((("infrastructure-as-a-service (IaaS) clouds", "Apache CloudStack")))((("Apache CloudStack"))) Furthermore, the cloud provides the functionality to snapshot a VM. The simplified playbook looks like the((("load balancers", "taking a VM out of"))) following:
+
+1. Take VM out of the load balancer.
+2. Create a VM snapshot before the app upgrade.
+3. Upgrade the application.
+4. Run smoke tests.
+5. Roll back when something goes wrong.
+6. Move VM back to the load balancer.
+7. Clean up and remove the VM snapshot.
+
+Let's put these tasks into a playbook, still simplified and not yet runnable, as shown in <<app_upgrade_yml_2>>.
+
+[[app_upgrade_yml_2]]
+.app-upgrade.yml
+====
+[source,yaml+jinja]
+----
+---
+- hosts: app-servers
+  serial: 1
+  tasks:
+  - name: Take VM out of the load balancer
+  - name: Create a VM snapshot before the app upgrade
+
+  - block:
+    - name: Upgrade the application
+    - name: Run smoke tests
+
+    rescue:
+    - name: Revert a VM to the snapshot after a failed upgrade
+
+    always:
+    - name: Re-add webserver to the loadbalancer
+    - name: Remove a VM snapshot
+----
+====
+
+In this playbook, we will most certainly end up with a running VM being a member of a load balancer cluster, even if the upgrade fails.
+
+[WARNING]
+====
+The tasks under the `always` clause will be executed even if an error occurred in the `rescue` clause! Be careful what you put in the `always` clause.((("always clause")))((("rescue clause")))
+====
+
+In case ((("load balancers", "getting upgraded VMs back to")))we want to get only upgraded VMs back to the load balancer cluster, the play would look a bit different, as shown in <<appup_3>>.
+
+[[appup_3]]
+.app-upgrade.yml
+====
+[source,yaml+jinja]
+----
+---
+- hosts: app-servers
+  serial: 1
+  tasks:
+  - name: Take VM out of the load balancer
+  - name: Create a VM snapshot before the app upgrade
+
+  - block:
+    - name: Upgrade the application
+    - name: Run smoke tests
+
+    rescue:
+    - name: Revert a VM to the snapshot after a failed upgrade
+
+  - name: Re-add webserver to the loadbalancer
+  - name: Remove a VM snapshot
+----
+====
+
+We removed the `always` clause and put the two tasks at the end of the play. This ensures that the two tasks will be executed only if the rescue went through. As a result, we get only upgraded VMs back to the load balancer.
+
+The final playbook looks like <<block_error_handling_full_playbook>>.
+
+[[block_error_handling_full_playbook]]
+.Error-agnostic application-upgrade playbook
+====
+[source,yaml+jinja]
+----
+---
+- hosts: app-servers
+  serial: 1
+  tasks:
+  - name: Take app server out of the load balancer
+    local_action:
+      module: cs_loadbalancer_rule_member
+      name: balance_http
+      vm: "{{ inventory_hostname_short }}"
+      state: absent
+  - name: Create a VM snapshot before an upgrade
+    local_action:
+      module: cs_vmsnapshot
+      name: Snapshot before upgrade
+      vm: "{{ inventory_hostname_short }}"
+      snapshot_memory: yes
+
+  - block:
+    - name: Upgrade the application
+      script: upgrade-app.sh
+    - name: Run smoke tests
+      script: smoke-tests.sh
+
+    rescue:
+    - name: Revert the VM to a snapshot after a failed upgrade
+      local_action:
+        module: cs_vmsnapshot
+        name: Snapshot before upgrade
+        vm: "{{ inventory_hostname_short }}"
+        state: revert
+
+  - name: Re-add app server to the loadbalancer
+    local_action:
+      module: cs_loadbalancer_rule_member
+      name: balance_http
+      vm: "{{ inventory_hostname_short }}"
+      state: present
+  - name: Remove a VM snapshot after successful upgrade or successful rollback
+    local_action:
+      module: cs_vmsnapshot
+      name: Snapshot before upgrade
+      vm: "{{ inventory_hostname_short }}"
+      state: absent
+----
+====
+
+=== Encrypting Sensitive Data with Vault
+
+Our Mezzanine playbook requires access to sensitive information, such as database and administrator passwords.((("playbooks", "advanced features", "error handling with blocks", startref="ix_playbkadverr")))((("error handling with blocks", startref="ix_errblock")))((("blocks", "error handling with", startref="ix_blockerr"))) We dealt with this in <<deploying_mezzanine>> by putting all of the sensitive information in a separate file called _secrets.yml_ and making sure that we didn't check this file into our version-control repository.((("playbooks", "advanced features", "encrypting sensitive data with vault", id="ix_playbkadvencr")))((("vault, encrypting sensitive data with", id="ix_vault")))((("ansible-vault command-line tool", id="ix_ansvault")))
+
+Ansible provides an alternative solution: instead of keeping the _secrets.yml_ file out of version control, we can commit an encrypted version. That way, even if our version-control repository were compromised, the attacker would not have access to the contents of the _secrets.yml_ file unless he also had the password used for the encryption.
+
+The +ansible-vault+ command-line tool allows you to create and edit an encrypted file that +ansible-playbook+ will recognize and decrypt automatically, given the pass:[<span class="keep-together">password</span>].
+
+We can encrypt an existing file like this:
+
+[source,console]
+----
+$ ansible-vault encrypt secrets.yml
+----
+
+Alternately, we can create a new encrypted _secrets.yml_ file:
+[source,console]
+----
+$ ansible-vault create secrets.yml
+----
+
+You will be prompted for a password, and then +ansible-vault+ will launch a
+text editor so that you can populate the file.((("text editors")))((("EDITOR environment variable"))) It launches the editor specified
+in the +$EDITOR+ environment variable. If that variable is not defined, it
+defaults to +vim+.
+
+<<ansible_vault_encrypted_file>> shows an example of the contents of a file
+encrypted using +ansible-vault+.
+
+[[ansible_vault_encrypted_file]]
+.Contents of file encrypted with ansible-vault
+====
+----
+$ANSIBLE_VAULT;1.1;AES256
+34306434353230663665633539363736353836333936383931316434343030316366653331363262
+6630633366383135386266333030393634303664613662350a623837663462393031626233376232
+31613735376632333231626661663766626239333738356532393162303863393033303666383530
+...
+62346633343464313330383832646531623338633438336465323166626335623639383363643438
+64636665366538343038383031656461613665663265633066396438333165653436
+----
+====
+
+You can use the +vars_files+ section of a play to reference a file encrypted with +ansible-vault+ the same
+way you would access a regular file: we would not need to modify
+<<full_mezzanine_playbook>> at all if we encrypted the _secrets.yml_ file.
+
+We do need to tell +ansible-playbook+ to prompt us for the password of the
+encrypted file, or it will simply error out.((("ansible-playbook --ask-vault-pass command"))) Do so by using the
++--ask-vault-pass+ argument:
+[source,console]
+----
+$ ansible-playbook mezzanine.yml --ask-vault-pass
+----
+
+You can also store the password in a text file and tell +ansible-playbook+ the
+location of this password file by using the +--vault-password-file+ flag:
+[source,console]
+----
+$ ansible-playbook mezzanine --vault-password-file ~/password.txt
+----
+
+If the argument to +--vault-password-file+ has the executable bit set, Ansible
+will execute it and use the contents of +standard out+ as the vault password. This
+allows you to use a script to provide the password to Ansible.
+
+<<vault_table>> shows the available +ansible-vault+ commands.((("ansible-vault command-line tool", "list of commands")))((("playbooks", "advanced features", "encrypting sensitive data with vault", startref="ix_playbkadvencr")))((("ansible-vault command-line tool", startref="ix_ansvault")))((("vault, encrypting sensitive data with", startref="ix_vault")))((("playbooks", "advanced features", startref="ix_playbkadv")))
+
+[[vault_table]]
+.ansible-vault commands
+[options="header"]
+|=======================================================================================
+|Command                           |Description
+|ansible-vault encrypt _file.yml_  |Encrypt the plain-text _file.yml_ file
+|ansible-vault decrypt _file.yml_  |Decrypt the encrypted _file.yml_ file
+|ansible-vault view _file.yml_     |Print the contents of the encrypted _file.yml_ file
+|ansible-vault create _file.yml_   |Create a new encrypted _file.yml_ file
+|ansible-vault edit _file.yml_     |Edit an encrypted _file.yml_ file
+|ansible-vault rekey _file.yml_    |Change the password on an encrypted _file.yml_ file
+|=======================================================================================

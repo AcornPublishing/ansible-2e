@@ -1,0 +1,63 @@
+[preface]
+== Preface to the Second Edition
+
+In the time since the first edition of the book was written (back in 2014), there have been
+big changes in the world of Ansible. The Ansible project completed a major
+release, hitting 2.0. Big changes happened outside the project as well:
+Ansible, Inc., the company that backs the Ansible project, was acquired by Red Hat.
+Red Hat's acquisition hasn't slowed the Ansible project at all: it's still
+in active development and gaining users.
+
+We've made multiple changes in this edition. The most significant
+change is the addition of five new chapters. The book now covers callback plugins, Windows
+hosts, network hardware, and Ansible Tower.  We added so much content to the
+"Complex Playbooks" chapter that we expanded to a second chapter called
+"Customizing Hosts, Runs and Handlers." We also rewrote the "Docker" chapter
+to cover the new Docker modules.
+
+We've updated all of the example code for compatibility with Ansible 2.3. In
+particular, the deprecated +sudo+ clause has been replaced everywhere with
++become+. We also removed references to deprecated modules such as +docker+,
++ec2_vpc+, and +ec2_ami_search+ and replaced them with examples that use newer
+modules. The "Vagrant" chapter now covers the Ansible local provisioner, the
+"Amazon EC2" chapter now covers the Packer Ansible remote provisioner, the
+"Making Ansible Go Even Faster" chapter now covers asynchronous tasks, and the
+"Debugging Ansible Playbooks" chapter now covers the debugger that was introduced in
+version 2.1.
+
+There are also minor changes. For example, OpenSSH switched from
+using hexadecimal-encoded MD5 fingerprints to base64-encoded SHA256
+fingerprints, and we updated examples accordingly. Finally, we fixed errata submitted by readers.
+
+[role="pagebreak-before"]
+=== A Note About Language
+
+The first edition of the book had a single author, and often used the
+first-person singular _I_. Since this edition has two authors, the use of
+first-person singular might seem odd in some places. However, we decided to keep
+it because it is typically used to express the opinion of one of the authors.
+
+=== Acknowledgments
+
+==== From Lorin
+
+Thanks to Jan-Piet Mens, Matt Jaynes, and John Jarvis for reviewing drafts of
+the book and providing feedback. Thanks to Isaac Saldana and Mike Rowan at
+SendGrid for being so supportive of this endeavor. Thanks to Michael DeHaan for
+creating Ansible and shepherding the community that sprang up around it, as well
+as for providing feedback on the book, including an explanation of why he chose
+to use the name _Ansible_.  Thanks to my editor, Brian Anderson, for his endless
+patience in working with me.
+
+Thanks to Mom and Dad for their unfailing support; my brother Eric, the actual
+writer in the family; and my two sons, Benjamin and Julian. Finally, thanks to my
+wife, Stacy, for everything.
+
+==== From René
+
+Thanks to my family, my wife Simone for the support and love, my three children, Gil, Sarina and Léanne, for the joy they brought into my life; to all those people contributing to Ansible, thank you for your work; and a special thanks to Matthias Blaser who introduced Ansible to me.
+
+////
+This is where you'll dedicate the book to those who helped, supported, and sacrificed as you created the book, and possibly dear pets, too.
+////
+

@@ -1,0 +1,598 @@
+[[DEBUGGING]]
+== Debugging Ansible Playbooks
+
+Let's face it: mistakes happen. Whether it's a bug in a playbook, or a config
+file on your control machine with the wrong configuration value, eventually
+something's going to go wrong.((("playbooks", "debugging", id="ix_playbkdebug")))((("debugging", "playbooks", id="ix_debugplay"))) In this chapter, I'll review some techniques
+you can use to help track down those errors.
+
+=== Humane Error Messages
+
+When an Ansible task fails, the output format isn't very friendly to any human
+reader trying to debug the problem.((("debugging", "playbooks", "humane error messages")))((("playbooks", "debugging", "humane error messages")))((("errors", "humane error messages"))) Here's an example of an error message
+generated while working on this book:
+
+----
+TASK [check out the repository on the host] *************************************
+fatal: [web]: FAILED! => {"changed": false, "cmd": "/usr/bin/git clone --origin o
+rigin '' /home/vagrant/mezzanine/mezzanine_example", "failed": true, "msg": "Clon
+ing into '/home/vagrant/mezzanine/mezzanine_example'...\nPermission denied (publi
+ckey).\r\nfatal: Could not read from remote repository.\n\nPlease make sure you h
+ave the correct access rights\nand the repository exists.", "rc": 128, "stderr":
+"Cloning into '/home/vagrant/mezzanine/mezzanine_example'...\nPermission denied (
+publickey).\r\nfatal: Could not read from remote repository.\n\nPlease make sure
+you have the correct access rights\nand the repository exists.\n", "stderr_lines"
+: ["Cloning into '/home/vagrant/mezzanine/mezzanine_example'...", "Permission den
+ied (publickey).", "fatal: Could not read from remote repository.", "", "Please m
+ake sure you have the correct access rights", "and the repository exists."], "std
+out": "", "stdout_lines": []}
+----
+
+As mentioned in <<CALLBACK_PLUGINS>>, the +debug+ callback ((("debug plugin", "making error messages easier to read")))plugin makes this output much easier for a human to read:
+
+[role="pagebreak-before"]
+----
+TASK [check out the repository on the host] *************************************
+fatal: [web]: FAILED! => {
+    "changed": false,
+    "cmd": "/usr/bin/git clone --origin origin '' /home/vagrant/mezzanine/mezzani
+    ne_example",
+    "failed": true,
+    "rc": 128
+}
+
+STDERR:
+
+Cloning into '/home/vagrant/mezzanine/mezzanine_example'...
+Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+
+
+
+MSG:
+
+Cloning into '/home/vagrant/mezzanine/mezzanine_example'...
+Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+----
+
+Enable the plugin by adding the following((("debug plugin", "enabling"))) to the +defaults+ section of _ansible.cfg_:
+
+----
+[defaults]
+stdout_callback = debug
+----
+
+
+=== Debugging SSH Issues
+
+Sometimes Ansible fails to make a successful SSH connection with the host. When
+this happens, it's helpful to see exactly what arguments Ansible is passing
+to the underlying SSH client so you can reproduce the problem manually on the
+command line.((("playbooks", "debugging", "SSH issues", id="ix_playbkdebugSSH")))((("SSH", "issues with, debugging", id="ix_SSHdebug")))((("debugging", "playbooks", "SSH issues", id="ix_debugplaySSH")))
+
+If you invoke +ansible-playbook+ with the +-vvv+ argument, you can see the exact
+SSH commands that Ansible invokes. ((("ansible-playbook -vvv command")))This can be handy for debugging.
+
+<<SAMPLE_SSH_OUTPUT_DEBUG>> shows some sample Ansible output for executing a module
+that copies a file.
+
+.Example output when verbose flags are enabled
+[[SAMPLE_SSH_OUTPUT_DEBUG]]
+====
+----
+TASK: [copy TLS key] **********************************************************
+task path: /Users/lorin/dev/ansiblebook/ch15/playbooks/playbook.yml:5
+Using module file /usr/local/lib/python2.7/site-packages/ansible/modules/core/
+files/stat.py
+<127.0.0.1> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o
+StrictHostKeyChecking=no -o Port=2222 -o 'IdentityFile=".vagrant/machines/default/
+virtualbox/private_key"' -o KbdInteractiveAuthentication=no -o
+PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o
+PasswordAuthentication=no -o User=vagrant -o ConnectTimeout=10 -o ControlPath=
+/Users/lorin/.ansible/cp/ansible-ssh-%h-%p-%r 127.0.0.1 '/bin/sh -c '"'"'( umask
+77 && mkdir -p "` echo ~/.ansible/tmp/ansible-tmp-1487128449.23-168248620529755 `"
+&& echo ansible-tmp-1487128449.23-168248620529755="` echo ~/.ansible/tmp/ansible-
+tmp-1487128449.23-168248620529755 `" ) && sleep 0'"'"''
+<127.0.0.1> PUT /var/folders/g_/523vq6g1037d10231mmbx1780000gp/T/tmpyOxLAA TO
+/home/vagrant/.ansible/tmp/ansible-tmp-1487128449.23-168248620529755/stat.py
+<127.0.0.1> SSH: EXEC sftp -b - -C -o ControlMaster=auto -o ControlPersist=60s -o
+StrictHostKeyChecking=no -o Port=2222 -o 'IdentityFile=".vagrant/machines/default/
+virtualbox/private_key"' -o KbdInteractiveAuthentication=no -o
+PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o
+PasswordAuthentication=no -o User=vagrant -o ConnectTimeout=10 -o ControlPath=
+/Users/lorin/.ansible/cp/ansible-ssh-%h-%p-%r '[127.0.0.1]'
+----
+====
+
+Sometimes you might need to use +-vvvv+ when debugging a
+connection issue, in order to see an error message that the SSH client is
+throwing. For example, if the host doesn't have SSH running, you'll see an error
+that looks like this:
+
+----
+testserver | FAILED => SSH encountered an unknown error. The output was:
+OpenSSH_6.2p2, OSSLShim 0.9.8r 8 Dec 2011
+debug1: Reading configuration data /etc/ssh_config
+debug1: /etc/ssh_config line 20: Applying options for *
+debug1: /etc/ssh_config line 102: Applying options for *
+debug1: auto-mux: Trying existing master
+debug1: Control socket "/Users/lorin/.ansible/cp/ansible-ssh-127.0.0.1-
+2222-vagrant" does not exist
+debug2: ssh_connect: needpriv 0
+debug1: Connecting to 127.0.0.1 [127.0.0.1] port 2222.
+debug2: fd 3 setting O_NONBLOCK
+debug1: connect to address 127.0.0.1 port 2222: Connection refused
+ssh: connect to host 127.0.0.1 port 2222: Connection refused
+----
+
+If you have host-key verification enabled, and the host key in
+_~/.ssh/known_hosts_ doesn't match the host key of the server, then using
++-vvvv+ will output an error ((("host-key verification (SSH), problems with")))that looks like this:
+
+----
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+It is also possible that a host key has just been changed.
+The fingerprint for the RSA key sent by the remote host is
+c3:99:c2:8f:18:ef:68:fe:ca:86:a9:f5:95:9e:a7:23.
+Please contact your system administrator.
+Add correct host key in /Users/lorin/.ssh/known_hosts to get rid of this
+message.
+Offending RSA key in /Users/lorin/.ssh/known_hosts:1
+RSA host key for [127.0.0.1]:2222 has changed and you have requested strict
+checking.
+Host key verification failed.
+----
+
+If that's the case, you should delete the offending entry from your
+_~/.ssh/known_hosts_ file.((("playbooks", "debugging", "SSH issues", startref="ix_playbkdebugSSH")))((("SSH", "issues with, debugging", startref="ix_SSHdebug")))((("debugging", "playbooks", "SSH issues", startref="ix_debugplaySSH")))
+
+=== The Debug Module
+
+We've used the +debug+ module several times in this book.((("debug module")))((("debugging", "playbooks", "debug module")))((("playbooks", "debugging", "debug module"))) It's Ansible's version of a +print+ statement. As shown in <<debug_module>>, you can use it to print out either the value of a variable or an arbitrary string.
+
+[[debug_module]]
+.The debug module in action
+====
+[source,yaml+jinja]
+----
+- debug: var=myvariable
+- debug: msg="The value of myvariable is {{ var }}"
+
+----
+====
+
+As we discussed in <<variables_and_facts>>, you can print out the values of all the variables associated with the current host by invoking the following:
+
+----
+- debug: var=hostvars[inventory_hostname]
+----
+
+=== Playbook Debugger
+
+Ansible 2.1 added support for an interactive debugger.((("playbooks", "debugging", "playbook debugger")))((("debugging", "playbooks", "using playbook debugger")))((("strategies", "debug strategy"))) To enable debugging, add +strategy: debug+ to your
+play; for example:
+
+----
+- name: an example play
+  strategy: debug
+  tasks:
+    ...
+----
+
+If debugging is enabled, Ansible drops into the debugger when a task fails:
+
+----
+TASK [try to apt install a package] ********************************************
+fatal: [localhost]: FAILED! => {"changed": false, "cmd": "apt-get update",
+"failed": true, "msg": "[Errno 2] No such file or directory", "rc": 2}
+Debugger invoked
+(debug)
+----
+
+
+<<supported_commands>> shows the commands supported by the debugger.
+
+
+[[supported_commands]]
+.Debugger commands
+[options="header"]
+|===============================================================
+|Command                | Description
+|+p var+                | Print out the value of a supported variable
+|+task.args[key]=value+ | Modify an argument for the failed task
+|+vars[key]=value+      | Modify the value of a variable
+|+r+                    | Rerun the failed task
+|+c+                    | Continue executing the play
+|+q+                    | Abort the play and execute the debugger
+|+help+                 | Show help message
+|===============================================================
+
+
+<<supported_print_commands>> shows the variables supported
+by the debugger.
+
+[[supported_print_commands]]
+.Variables supported by the debugger
+[options="header"]
+|===============================================================
+|Command       | Description
+|+p task+      |The name of the task that failed
+|+p task.args+ |The module arguments
+|+p result+    |The result returned by the failed task
+|+p vars+      |Value of all known variables
+|+p vars[key]+ |Value of one variable
+|===============================================================
+
+Here's an example interaction with the debugger:
+
+----
+(debug) p task
+TASK: try to apt install a package
+(debug) p task.args
+{u'name': u'foo'}
+(debug) p result
+{'_ansible_no_log': False,
+ '_ansible_parsed': True,
+ 'changed': False,
+ u'cmd': u'apt-get update',
+ u'failed': True,
+ 'invocation': {u'module_args': {u'allow_unauthenticated': False,
+                                 u'autoremove': False,
+                                 u'cache_valid_time': 0,
+                                 u'deb': None,
+                                 u'default_release': None,
+                                 u'dpkg_options': u'force-confdef,force-confold',
+                                 u'force': False,
+                                 u'install_recommends': None,
+                                 u'name': u'foo',
+                                 u'only_upgrade': False,
+                                 u'package': [u'foo'],
+                                 u'purge': False,
+                                 u'state': u'present',
+                                 u'update_cache': False,
+                                 u'upgrade': None},
+                'module_name': u'apt'},
+ u'msg': u'[Errno 2] No such file or directory',
+ u'rc': 2}
+(debug) p vars['inventory_hostname']
+u'localhost'
+(debug) p vars
+{u'ansible_all_ipv4_addresses': [u'192.168.86.113'],
+ u'ansible_all_ipv6_addresses': [u'fe80::f89b:ffff:fe32:5e5%awdl0',
+                                 u'fe80::3e60:8f83:34b5:fc17%utun0',
+                                 u'fe80::9679:241b:e93:8b7f%utun2'],
+ u'ansible_architecture': u'x86_64',
+ ...
+----
+
+While you'll probably find printing out variables to be the most useful feature
+of the debugger, you can also use it to modify variables and modify arguments to
+the failed task. See the http://bit.ly/2lvAm8B[Ansible playbook debugger docs]
+for more details.
+
+
+=== The Assert Module
+
+The +assert+ module will fail with an error if a specified condition is not met.((("playbooks", "debugging", "assert module", id="ix_playdbugass")))((("assert module", id="ix_assert")))((("debugging", "playbooks", "assert module", id="ix_debugplass"))) For example, to fail the playbook if there's no +eth1+ interface:
+[source,yaml+jinja]
+----
+- name: assert that eth1 interface exists
+  assert:
+    that: ansible_eth1 is defined
+----
+
+When debugging a playbook, it can be helpful to insert assertions so that a
+failure happens as soon as any assumption you've made has been violated.
+
+[WARNING]
+====
+Keep in mind that the code in an +assert+ statement is Jinja2, not Python.((("Jinja2 template engine", "assert statement code"))) For
+example, if you want to assert the length of a list, you might be tempted to do
+this:
+
+----
+# Invalid Jinja2, this won't work!
+assert:
+    that: "len(ports) == 1"
+----
+
+Unfortunately, Jinja2 does not support Python's built-in +len+ function.
+Instead,((("length filter (Jinja2)"))) you need to use the Jinja2 +length+ filter:
+
+----
+assert:
+  that: "ports|length == 1"
+----
+====
+
+
+If you want to check on the status of a file on the host's filesystem,
+it's useful to ((("stat module")))call the +stat+ module first and make an assertion based on
+the return value of that module:
+[source,yaml+jinja]
+----
+- name: stat /opt/foo
+  stat: path=/opt/foo
+  register: st
+
+- name: assert that /opt/foo is a directory
+  assert:
+    that: st.stat.isdir
+----
+
+The +stat+ module collects information about the state of a file path. It returns a dictionary that contains a +stat+ field with the values shown in <<STAT_TABLE>>.
+
+[[STAT_TABLE]]
+.stat module return values
+[options="header"]
+|====================================================================
+|Field   |Description
+|atime   | Last access time of path, in Unix timestamp format
+|ctime   | Creation time of path, in Unix timestamp format
+|dev     | Numerical ID of the device that the inode resides on
+|exists  | True if path exists
+|gid     | Numerical group ID of path owner
+|inode   | Inode number
+|isblk   | True if path is block special device file
+|ischr   | True if path is character special device file
+|isdir   | True if path is a directory
+|isfifo  | True if path is a FIFO (named pipe)
+|isgid   | True if set-group-ID bit is set on file
+|islnk   | True if path is a symbolic link
+|isreg   | True if path is a regular file
+|issock  | True if path is a Unix domain socket
+|isuid   | True if set-user-ID bit is set on file
+|mode    | File mode as a string, in octal (e.g., "1777")
+|mtime   | Last modification time of path, in Unix timestamp format
+|nlink   | Number of hard links to the file
+|pw_name | Login name of file owner
+|rgrp    | True if group read permission enabled
+|roth    | True if other read permission enabled
+|rusr    | True if user read permission enabled
+|size    | File size in bytes, if regular file
+|uid     | Numerical user ID of path owner
+|wgrp    | True if group write permission enabled
+|woth    | True if other write permission enabled
+|wusr    | True if user write permission enabled
+|xgrp    | True if group execute permission enabled
+|xoth    | True if other execute permission enabled
+|xusr    | True if user execute permission enabled
+|====================================================================
+
+=== Checking Your Playbook Before Execution
+
+The +ansible-playbook+ command supports several flags that allow you to sanity check your playbook before you execute it.((("playbooks", "debugging", "assert module", startref="ix_playdbugass")))((("debugging", "playbooks", "assert module", startref="ix_debugplass")))((("assert module", startref="ix_assert")))((("debugging", "playbooks", "checking playbooks before execution", id="ix_debugplck")))((("playbooks", "debugging", "checking playbooks before execution", id="ix_playdbugchk")))
+
+==== Syntax Check
+
+The +--syntax-check+ flag, shown in <<example14-3>>, checks that your playbook's syntax is valid, but
+it does not execute it.((("syntax check for playbooks")))((("ansible-playbook --syntax-check command")))
+
+[[example14-3]]
+.syntax check
+====
+[source,console]
+----
+$ ansible-playbook --syntax-check playbook.yml
+----
+====
+
+==== List Hosts
+
+
+The +--list-hosts+ flag, shown in <<example14-4>>, outputs the hosts that the playbook will run against, but it does not execute the playbook.((("hosts", "listing hosts playbook will run against")))((("ansible-playbook --list-hosts command")))
+
+[[example14-4]]
+.list hosts
+====
+[source,console]
+----
+$ ansible-playbook --list-hosts playbook.yml
+----
+====
+
+[NOTE]
+====
+Sometimes you get the dreaded error:
+
+----
+ERROR: provided hosts list is empty
+----
+There must be one host explicitly specified in your inventory, or you'll get this((("errors", "provided hosts list is empty")))((("hosts", "provided hosts list is empty error")))
+error, even if your playbook runs against only the +localhost+. If your inventory is
+initially empty (perhaps because you're using a dynamic inventory script and
+haven't launched any hosts yet), you can work around this by explicitly adding
+the following line to your inventory:
+
+----
+localhost ansible_connection=local
+----
+
+====
+
+==== List Tasks
+
+The +--list-tasks+ flag, shown in <<example14-5>>, outputs the tasks that the playbook will run against.((("tasks", "listing for a playbook"))) It does not execute the playbook.((("ansible-playbook --list-tasks command")))
+
+[[example14-5]]
+.list tasks
+====
+----
+$ ansible-playbook --list-tasks playbook.yml
+----
+====
+
+Recall that we used this flag in <<mezzanine_task_list>> to list the tasks in
+our first Mezzanine playbook.
+
+[[check_mode]]
+==== Check Mode
+
+The +-C+ and +--check+ flags run Ansible ((("dry run mode")))((("check mode")))in check mode (sometimes known as _dry-run_), which tells you whether each task in the playbook will modify the host, but does not make any changes to the server.
+
+----
+$ ansible-playbook -C playbook.yml
+$ ansible-playbook --check playbook.yml
+----
+
+One of the challenges with using check mode is that later parts of a playbook
+might succeed only if earlier parts of the playbook were executed.
+Running check mode on <<full_mezzanine_playbook>> yields the error shown in
+<<CHECK_MODE_GONE_WRONG>> because the task depended on an earlier task
+(installing the Git program on the host).
+
+
+[[CHECK_MODE_GONE_WRONG]]
+.Check mode failing on a correct playbook
+====
+----
+
+PLAY [Deploy mezzanine] *******************************************************
+
+GATHERING FACTS ***************************************************************
+ok: [web]
+
+TASK: [install apt packages] **************************************************
+changed: [web] => (item=git,libjpeg-dev,libpq-dev,memcached,nginx,postgresql,py
+thon-dev,python-pip,python-psycopg2,python-setuptools,python-virtualenv,supervi
+sor)
+
+TASK: [check out the repository on the host] **********************************
+failed: [web] => {"failed": true}
+msg: Failed to find required executable git
+
+FATAL: all hosts have already failed -- aborting
+----
+====
+
+
+See <<custom_modules>> for more details on how modules
+implement check mode.
+
+
+==== Diff (Show File Changes)
+
+
+The +-D+ and +-diff+ flags output differences for any files that are changed on the
+remote machine.((("diff (show file changes)"))) It's a helpful option to use in conjunction with +--check+ to((("ansible-playbook --diff --check command")))((("ansible-playbook -D --check command")))
+show how Ansible would change the file if it were run normally:
+
+----
+$ ansible-playbook -D --check playbook.yml
+$ ansible-playbook --diff --check playbook.yml
+----
+
+If Ansible would modify any files (e.g., using modules such as +copy+,
++template+, and +lineinfile+), it will show the changes in _.diff_ format,
+like this:
+
+----
+TASK: [set the gunicorn config file] ******************************************
+--- before: /home/vagrant/mezzanine-example/project/gunicorn.conf.py
++++ after: /Users/lorin/dev/ansiblebook/ch06/playbooks/templates/gunicor
+n.conf.py.j2
+@@ -1,7 +1,7 @@
+ from __future__ import unicode_literals
+ import multiprocessing
+
+ bind = "127.0.0.1:8000"
+ workers = multiprocessing.cpu_count() * 2 + 1
+-loglevel = "error"
++loglevel = "warning"
+ proc_name = "mezzanine-example"
+----
+
+
+=== Limiting Which Tasks Run
+
+Sometimes you don't want Ansible to run every single task in
+your playbook, particularly when you're first writing and debugging the
+playbook.((("debugging", "playbooks", "checking playbooks before execution", startref="ix_debugplck")))((("playbooks", "debugging", "checking playbooks before execution", startref="ix_playdbugchk"))) Ansible provides several command-line options that let you control
+which tasks run.((("tasks", "limiting which tasks run")))
+
+==== Step
+
+
+The +--step+ flag, shown in <<step-example>>, has Ansible prompt you before running each task, ((("--step flag", primary-sortas="step flag")))like
+this:
+
+----
+Perform task: install packages (y/n/c):
+----
+
+You can choose to execute the task (y), skip it (n), or tell Ansible to continue
+running the rest of the playbook without prompting you (c).((("ansible-playbook --step command")))
+
+[[step-example]]
+.step
+====
+----
+$ ansible-playbook --step playbook.yml
+----
+====
+
+==== Start-at-Task
+
+
+The +--start-at-task taskname+ flag, shown in <<example14-8>>, tells Ansible to start running the playbook
+at the specified task, instead of at the beginning.((("ansible-playbook --start-at-task command")))((("tasks", "starting running of playbook at specified task"))) This can be handy if
+one of your tasks failed because there was a bug in one of your tasks, and you
+want to rerun your playbook starting at the task you just fixed.
+[[example14-8]]
+.start-at-task
+====
+----
+$ ansible-playbook --start-at-task="install packages" playbook.yml
+----
+====
+
+==== Tags
+
+Ansible allows you to add one or more tags to a task or a play.((("tags", "adding to tasks or plays")))((("tasks", "adding tags to")))((("plays", "adding tags to"))) For example, here's
+a play that's tagged with +foo+ and a task that's tagged with +bar+ and +quux+:
+
+[role="pagebreak-before"]
+[source,yaml+jinja]
+----
+- hosts: myservers
+  tags:
+   - foo
+  tasks:
+   - name: install editors
+     apt: name={{ item }}
+     with_items:
+       - vim
+       - emacs
+       - nano
+
+   - name: run arbitrary command
+     command: /opt/myprog
+     tags:
+       - bar
+       - quux
+----
+
+Use the +-t tagnames+ or +--tags tagnames+ flag to tell Ansible to
+run only plays and tasks that have certain tags. Use the +--skip-tags tagnames+ flag
+to tell Ansible to skip plays and tasks that have certain tags.((("playbooks", "debugging", startref="ix_playbkdebug")))((("debugging", "playbooks", startref="ix_debugplay"))) See <<example14-9>>.
+[[example14-9]]
+.Running or skipping tags
+====
+----
+$ ansible-playbook -t foo,bar playbook.yml
+$ ansible-playbook --tags=foo,bar playbook.yml
+$ ansible-playbook --skip-tags=baz,quux playbook.yml
+----
+====
+

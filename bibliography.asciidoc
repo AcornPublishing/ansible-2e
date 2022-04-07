@@ -1,0 +1,15 @@
+[role="bibliography"]
+[appendix]
+[[bibliography]]
+== Bibliography
+
+[bibliography]
+- [[vagrant]] Hashimoto, Mitchell. 'Vagrant: Up and Running'. O'Reilly Media, 2013.
+- [[pragprog]] Hunt, Andrew; Thomas, David. 'The Pragmatic Programmer: From Journeyman to Master'. Addison-Wesley, 1999.
+- [[tastetest]] Jaynes, Matt. 'Taste Test: Puppet, Chef, Salt, Ansible'.  Publisher, 2014.
+- [[dataintensive]] Kleppmann, Martin. 'Designing Data-Intensive Applications'. O'Reilly Media, 2015.
+- [[ansible-aws]] Kurniawan, Yan. 'Ansible for AWS'. Leanpub, 2016.
+- [[cloudsysadmin]] Limoncelli, Thomas A.; Hogan, Christina J.; Chalup, Strata R. 'The Practice of Cloud System Administration: Designing and Operating Large Distributed Systems'. Addison-Wesley Professional, 2014.
+- [[nist]] Mell, Peter; Grance, Timothy. 'The NIST Definition of Cloud Computing'. NIST Special Publication 800-145, 2011.
+- [[openssh]] 'OpenSSH/Cookbook/Multiplexing,' Wikibooks, http://bit.ly/1bpeV0y, October 28, 2014.
+- [[webops]] Shafer, Andrew Clay. _Agile Infrastructure in Web Operations: Keeping the Data on Time_. O'Reilly Media, 2010.

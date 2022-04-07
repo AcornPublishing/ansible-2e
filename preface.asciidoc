@@ -1,0 +1,185 @@
+[preface]
+== Preface to the First Edition
+
+
+=== Why I Wrote This Book
+
+When I was writing my first web application, using Django, the popular Python-based framework, I remember the sense of
+accomplishment when the app was finally working
+on my desktop. I would run `django manage.py runserver`, point my
+browser to pass:[<em>http://localhost:8000</em>], and there was my web application in all its
+glory.
+
+Then I discovered there were all of these..._things_ I had to do, just to get
+the darned app to run on the Linux server. In addition to installing Django and
+my app onto the server, I had to install Apache and the +mod_python+ module so
+that Apache could run Django apps. Then I had to figure out the right Apache
+configuration file incantation so that it would run my application and serve up
+the static assets properly.
+
+None of it was hard; it was just a pain to get all of those details right. I
+didn't want to muck about with configuration files; I just wanted my app to run.
+Once I got it working, everything was fine...until, several months
+later, I had to do it again, on a different server, at which point I had to
+start the process all over again.
+
+
+////
+
+TODO: Maybe add a sentence to explain better what config management is here
+////
+
+Eventually, I discovered that this process was Doing It Wrong. The right way to do this
+sort of thing has a name, and that name is _configuration management_. The great
+thing about using configuration management is that it's a way to capture
+knowledge that always stays up-to-date. No more hunting for the right doc page
+or searching through your old notes.
+
+Recently, a colleague at work was interested in trying out Ansible for deploying
+a new project, and he asked me for a reference on how to apply the Ansible
+concepts in practice, beyond what was available in the official docs. I didn't
+know what else to recommend, so I decided to write something to fill the gap—and here it
+is. Alas, this book comes too late for him, but I hope you'll find it useful.
+
+////
+Here you should describe how this book might have helped you at one point, and how this book adds to the body of knowledge or fills a gap. Another way to think of this is 'what we hope you'll get out of this.' You could also call this section "Goals of This Book"
+////
+
+=== Who Should Read This Book
+
+This book is for anyone who needs to deal with Linux or Unix-like
+servers. If you've ever used the terms _systems administration_, _operations_, _deployment_, _configuration management_, or (sigh) _DevOps_, then you should find some value here.
+
+Although I have managed my share of Linux servers, my background is in
+software engineering. This means that the examples in this book tend
+toward the deployment end of the spectrum, although I'm in agreement with <<webops,Andrew Clay Shafer>> that the distinction between deployment and configuration is unresolved.
+
+////
+This is where you describe your reader. Think of this in terms of what they do in their jobs, how this will make their tasks easier, and what knowledge you'd like them to have before getting the most out of this book.
+////
+
+=== Navigating This Book
+
+I'm not a big fan of book outlines: Chapter 1 covers so and so, Chapter 2 covers such and such, that sort of thing. I strongly suspect that nobody ever reads them (I never do), and the table of contents is much easier to scan.
+
+This book is written to be read start to finish, with later chapters building on the earlier ones. It's written largely in a tutorial style, so you should be able to follow along on your own machine. Most of the examples are focused on web applications.
+
+
+////
+Here is where you'll offer a summary of each of your book's chapters.  I've inserted a sample below from a Java book:
+
+This book is organized roughly as follows:
+* Chapters 1 and 2 provide a basic introduction to Java concepts and a tutorial to give you a jump start on Java programming
+* Chapter 3 discusses fundamental tools for developing with Java (the compiler, the interpreter, and the JAR file package).
+* Chapter 4 through 7 describe the Java language itself, beginning with the basic syntax and then covering classes and objects, exceptions, arrays, enumerations, annotations, and much more.
+* And so on..
+
+If you're like us, you don't read books from front to back. If you're really like us, you usually don't read the Preface at all. However, on the off chance that you will see this in time, here are a few suggestions:
+
+* If you are an experienced programmer who has to learn Java in the next five minutes, you are probably looking for the examples. You might want to start by glancing at the tutorial in Chapter 2. If that doesn't float your boat, you should at least look at the information in Chapter 3, which explains how to use the compiler and interpreter, or Appendix A, which shows how to run the examples in the Eclipse IDE. This should get you started.
+* Chapter 12 through 15 are essential if you are interested in writing advanced networked or web-based applications and services. This is one of the more interesting and important parts of Java.
+* And so on..
+////
+
+
+////
+Here is where you should list online references you feel readers should add to their bookmarks or should familiarize themselves with prior to beginning your book.
+////
+
+
+
+=== Conventions Used in This Book
+////
+Let me know if you need to edit this section.
+////
+The following typographical conventions are used in this book:
+
+_Italic_:: Indicates new terms, URLs, email addresses, filenames, and file extensions.
+
++Constant width+:: Used for program listings, as well as within paragraphs to refer to program elements such as variable or function names, databases, data types, environment variables, statements, and keywords.
+
+**`Constant width bold`**:: Shows commands or other text that should be typed literally by the user.
+
+_++Constant width italic++_:: Shows text that should be replaced with user-supplied values or by values determined by context.
+
+[NOTE]
+====
+This icon signifies a general note.
+====
+
+[TIP]
+====
+This icon signifies a tip or suggestion.
+====
+
+[WARNING]
+====
+This icon indicates a warning or caution.
+====
+
+=== Online Resources
+
+Code samples from this book are available at this book's http://github.com/ansiblebook/ansiblebook[GitHub page]. There is ample official http://docs.ansible.com[Ansible documentation] available for reference.
+
+I maintain a few Ansible quick reference pages on https://github.com/lorin/ansible-quickref[GitHub] as well.
+
+The Ansible code is on https://github.com/ansible/ansible[GitHub]. It was
+previously spread out across three repositories, but as of Ansible
+2.3, all of the code is maintained in a single repository.
+
+
+Bookmark the http://bit.ly/1Dt75tg[Ansible module index]; you'll be referring to it constantly as you use Ansible. https://galaxy.ansible.com[Ansible Galaxy] is a repository of Ansible roles contributed by the community. The http://bit.ly/1Dt79ZT[Ansible Project Google Group] is the place to go if you have any questions about Ansible.
+
+If you're interested in contributing to Ansible development, check out the http://bit.ly/1Dt79ZT[Ansible Development Google Group].
+
+For real-time help with Ansible, there's an active _#ansible_ IRC channel on _irc.freenode.net_.
+
+Supplemental material (code examples, exercises, etc.) is available for download at link:$$https://github.com/ansiblebook/ansiblebook$$[].
+
+This book is here to help you get your job done. In general, you may use the example code offered with this book in your programs and documentation. You do not need to contact us for permission unless you’re reproducing a significant portion of the code. For example, writing a program that uses several chunks of code from this book does not require permission. Selling or distributing a CD-ROM of examples from O’Reilly books does require permission. Answering a question by citing this book and quoting example code does not require permission. Incorporating a significant amount of example code from this book into your product’s documentation does require permission.
+
+We appreciate, but do not require, attribution. An attribution usually includes the title, author, publisher, and ISBN. For example: “_Ansible: Up and Running_ by Lorin Hochstein and René Moser (O’Reilly). Copyright 2017 O'Reilly Media, Inc., 978-1-491-97980-8.”
+
+If you feel your use of code examples falls outside fair use or the permission given above, feel free to contact us at pass:[<a class="email" href="mailto:permissions@oreilly.com"><em>permissions@oreilly.com</em></a>].
+
+=== Safari® Books Online
+
+[role = "safarienabled"]
+[NOTE]
+====
+pass:[<a href="http://safaribooksonline.com" class="orm:hideurl:ital"><em class="hyperlink">Safari Books Online</em></a>] is an on-demand digital library that delivers expert pass:[<a href="https://www.safaribooksonline.com/explore/" class="orm:hideurl">content</a>] in both book and video form from the world&#8217;s leading authors in technology and business.
+====
+
+Technology professionals, software developers, web designers, and business and creative professionals use Safari Books Online as their primary resource for research, problem solving, learning, and certification training.
+
+++++
+<p>Safari Books Online offers a range of <a href="https://www.safaribooksonline.com/pricing/" class="orm:hideurl">plans and pricing</a> for <a href="https://www.safaribooksonline.com/enterprise/" class="orm:hideurl">enterprise</a>, <a href="https://www.safaribooksonline.com/government/" class="orm:hideurl">government</a>, <a href="https://www.safaribooksonline.com/academic-public-library/" class="orm:hideurl">education</a>, and individuals.</p>
+
+<p>Members have access to thousands of books, training videos, and prepublication manuscripts in one fully searchable database from publishers like O&#8217;Reilly Media, Prentice Hall Professional, Addison-Wesley Professional, Microsoft Press, Sams, Que, Peachpit Press, Focal Press, Cisco Press, John Wiley &amp; Sons, Syngress, Morgan Kaufmann, IBM Redbooks, Packt, Adobe Press, FT Press, Apress, Manning, New Riders, McGraw-Hill, Jones &amp; Bartlett, Course Technology, and hundreds <a href="https://www.safaribooksonline.com/our-library/" class="orm:hideurl">more</a>. For more information about Safari Books Online, please visit us <a class="orm:hideurl">online</a>.</p>
+++++
+
+=== How to Contact Us
+
+Please address comments and questions concerning this book to the publisher:
+
+++++
+<ul class="simplelist">
+  <li>O’Reilly Media, Inc.</li>
+  <li>1005 Gravenstein Highway North</li>
+  <li>Sebastopol, CA 95472</li>
+  <li>800-998-9938 (in the United States or Canada)</li>
+  <li>707-829-0515 (international or local)</li>
+  <li>707-829-0104 (fax)</li>
+</ul>
+++++
+
+To comment or ask technical questions about this book, send email to pass:[<a class="email" href="mailto:bookquestions@oreilly.com"><em>bookquestions@oreilly.com</em></a>].
+
+For more information about our books, courses, conferences, and news, see our website at link:$$http://www.oreilly.com$$[].
+
+Find us on Facebook: link:$$http://facebook.com/oreilly$$[]
+
+Follow us on Twitter: link:$$http://twitter.com/oreillymedia$$[]
+
+Watch us on YouTube: link:$$http://www.youtube.com/oreillymedia$$[]
+

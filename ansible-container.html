@@ -1,0 +1,557 @@
+<section data-type="sect1">
+<h1>Ansible Container</h1>
+
+<p>Coinciding with the release of Ansible 2.1, the Ansible project released
+a new tool called <em>Ansible Container</em> to simplify working with Docker images
+and containers.<a data-type="indexterm" id="ix_DockAC" data-primary="Docker" data-secondary="Ansible Container"/> We cover Ansible Container 0.9, which coincided with the release
+of Ansible 2.3.<a data-type="indexterm" id="ix_AnsCont" data-primary="Ansible Container"/></p>
+
+<p>Ansible Container does quite a few things. In particular, you
+can use it to do the <span class="keep-together">following</span>:</p>
+
+<ul>
+<li>
+<p>Create new images (replaces Dockerfiles)</p>
+</li>
+<li>
+<p>Publish Docker images to registries (replaces <code>docker push</code>)</p>
+</li>
+<li>
+<p>Run Docker containers in development mode (replaces Docker Compose)</p>
+</li>
+<li>
+<p>Deploy to a production cloud (alternative to Docker Swarm)</p>
+</li>
+</ul>
+
+<p>As of this writing, Ansible Container supports deploying to Kubernetes and
+OpenShift, although this list is likely to grow.<a data-type="indexterm" data-primary="Kubernetes"/><a data-type="indexterm" data-primary="OpenShift"/> If you don&#8217;t run on one of
+these environments, don&#8217;t worry: you can write a playbook by using the <code>docker_container</code> module
+(described later in this chapter) to pull down and start your containers on
+whatever production environment you like.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>The Conductor</h2>
+
+<p>Ansible Container enables you to configure Docker images by using Ansible roles
+instead of Dockerfiles.<a data-type="indexterm" data-primary="Ansible Container" data-secondary="Conductor"/> When using Ansible to configure hosts, Python must be
+installed on the host. However, this requirement is generally considered
+undesirable for Docker containers because users typically want minimal
+containers; users don&#8217;t want to have Python installed in a container if
+that container won&#8217;t actually need Python.</p>
+
+<p>Ansible Container eliminates the need to have Python installed inside the
+container<a data-type="indexterm" data-primary="Conductor"/> by using a special container called the <em>Conductor</em>, and taking
+advantage of Docker&#8217;s ability to mount volumes from one container to another.</p>
+
+<p>When you run Ansible Container, it creates a local directory named
+<em>ansible-deployment</em>, copies all the files that the Conductor
+needs,  and mounts the directory from your local machine into the Conductor.</p>
+
+<p>Ansible Container mounts directories containing the Python runtime and any
+needed library dependencies <a data-type="indexterm" data-primary="Python" data-secondary="Ansible Container mounting runtime to containers being configured"/>from the Conductor container into the containers
+that are being configured. It does this by mounting <em>/usr</em> from the Conductor container
+instance to <span class="keep-together"><em>/_usr</em></span> inside the container being configured, and configures Ansible to use the Python interpreter under <span class="keep-together"><em>/_usr</em></span>.
+For this to work properly, the Linux distribution of the Docker container you
+use for the Conductor should match the Linux distribution of the base image of
+the Docker containers that you are configuring.</p>
+
+<p>If your Conductor base image is an official image from one of the supported Linux
+distributions, Ansible Container will automatically add some required
+packages to the container.  As of 0.9.0, the supported distributions are
+Fedora, CentOS, Debian, Ubuntu, and Alpine. You can use an unsupported base image,
+but you must ensure that it has the required packages installed.</p>
+
+<p>See the <em>container/docker/templates/conductor-dockerfile.j2</em> file in the <a href="https://github.com/ansible/ansible-container">Ansible
+Container GitHub repository</a> for
+information on which packages are installed into the Conductor image.</p>
+
+<p>If you don&#8217;t want Ansible Container to mount the runtime from the Conductor into the container
+being configured, you can disable this behavior by passing the
+<code>--use-local-python</code> flag to the <code>ansible-container</code> command. Ansible Container will then use the native Python interpreter of the container image
+being configured.<a data-type="indexterm" data-primary="ansible-container --use-local-python command"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Creating Docker Images</h2>
+
+<p>Let&#8217;s use Ansible Container to build that simple Nginx image from <a data-type="xref" href="#Dockerfile"/>.<a data-type="indexterm" id="ix_DockACimg" data-primary="Docker" data-secondary="Ansible Container" data-tertiary="creating Docker images"/><a data-type="indexterm" id="ix_AnsContimg" data-primary="Ansible Container" data-secondary="creating Docker images"/></p>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Creating the initial files</h3>
+
+<p>The first thing we must do is run <a data-type="indexterm" data-primary="ansible-container init command"/>the initialize command:</p>
+
+<pre data-type="programlisting">$ ansible-container init</pre>
+
+<p>This command creates a set of files in the current directory:</p>
+
+<pre data-type="programlisting">.
+├── ansible-requirements.txt
+├── ansible.cfg
+├── container.yml
+├── meta.yml
+└── requirements.yml</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Creating the roles</h3>
+
+<p>Next, we need a role that will configure our container.<a data-type="indexterm" data-primary="Ansible Container" data-secondary="creating Docker images" data-tertiary="creating roles"/><a data-type="indexterm" data-primary="roles" data-secondary="ghost-nginx, creating for Dockerized application"/> We&#8217;ll call our role
+<code>ghost-nginx</code>, since it configures an Nginx image for fronting Ghost.</p>
+
+<p>This role will be very simple; it just needs the <em>ghost.conf</em> configuration file
+from <a data-type="xref" href="#ghost.conf"/> and a task file that implements the functionality of
+<a data-type="xref" href="#Dockerfile"/>. Here&#8217;s the directory structure for the role:</p>
+
+<pre data-type="programlisting" class="pagebreak-before">.
+└── roles
+    └── ghost-nginx
+        ├── files
+        │   └── ghost.conf
+        └── tasks
+            └── main.yml</pre>
+
+<p>Here&#8217;s the <em>tasks/main.yml</em> file:</p>
+
+<pre data-type="programlisting">---
+- name: remove default config
+  file:
+    path: /etc/nginx/conf.d/default.conf
+    state: absent
+- name: add ghost config
+  copy:
+    src: ghost.conf
+    dest: /etc/nginx/conf.d/ghost.conf</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Configuring container.yml</h3>
+
+<p>Next, we&#8217;ll configure <em>container.yml</em> to use our role to build the container, as shown in <a data-type="xref" href="#container.yml"/>. This
+file is similar to a Docker Compose file, with additional fields that are
+Ansible-specific, and support for Jinja2-style variable substitution and filters.<a data-type="indexterm" data-primary="containers" data-secondary="configuring container.yml for Ansible Container"/></p>
+<div id="container.yml" data-type="example">
+<h5>container.yml</h5>
+
+<pre data-type="programlisting">version: "2" <a class="co" id="co_ansible_container_CO1-1" href="#callout_ansible_container_CO1-1"><img src="callouts/1.png" alt="1"/></a>
+settings:
+  conductor_base: debian:jessie <a class="co" id="co_ansible_container_CO1-2" href="#callout_ansible_container_CO1-2"><img src="callouts/2.png" alt="2"/></a>
+services: <a class="co" id="co_ansible_container_CO1-3" href="#callout_ansible_container_CO1-3"><img src="callouts/3.png" alt="3"/></a>
+  ac-nginx: <a class="co" id="co_ansible_container_CO1-4" href="#callout_ansible_container_CO1-4"><img src="callouts/4.png" alt="4"/></a>
+    from: nginx <a class="co" id="co_ansible_container_CO1-5" href="#callout_ansible_container_CO1-5"><img src="callouts/5.png" alt="5"/></a>
+    command: [nginx, -g, daemon off;] <a class="co" id="co_ansible_container_CO1-6" href="#callout_ansible_container_CO1-6"><img src="callouts/6.png" alt="6"/></a>
+    roles:
+      - ghost-nginx <a class="co" id="co_ansible_container_CO1-7" href="#callout_ansible_container_CO1-7"><img src="callouts/7.png" alt="7"/></a>
+registries: {} <a class="co" id="co_ansible_container_CO1-8" href="#callout_ansible_container_CO1-8"><img src="callouts/8.png" alt="8"/></a></pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_container_CO1-1" href="#co_ansible_container_CO1-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>This tells Ansible Container to support Docker Compose version 2 schemas.
+The default is version 1, but you probably always want version 2.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-2" href="#co_ansible_container_CO1-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>We are using <code>debian:jessie</code> as the base image for our Conductor container,
+because we will be customizing the official Nginx image, which uses
+<code>debian:jessie</code> as its base image.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-3" href="#co_ansible_container_CO1-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>The <code>services</code> field is a map whose keys are the names of the containers we
+are going to create. In this example, there is only a single container.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-4" href="#co_ansible_container_CO1-4"><img src="callouts/4.png" alt="4"/></a></dt>
+<dd><p>We call the container we are going to create <code>ac-nginx</code> for <em>Ansible Conductor Nginx</em>.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-5" href="#co_ansible_container_CO1-5"><img src="callouts/5.png" alt="5"/></a></dt>
+<dd><p>We specify <code>nginx</code> as the base image.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-6" href="#co_ansible_container_CO1-6"><img src="callouts/6.png" alt="6"/></a></dt>
+<dd><p>We need to specify the command that will be run when the container starts up.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-7" href="#co_ansible_container_CO1-7"><img src="callouts/7.png" alt="7"/></a></dt>
+<dd><p>We specify the roles to be used to configure this image. For this case,
+there&#8217;s only one role, <code>ghost-nginx</code>.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO1-8" href="#co_ansible_container_CO1-8"><img src="callouts/8.png" alt="8"/></a></dt>
+<dd><p>The <code>registries</code> field is used to specify the external registries we will
+push our containers to. We haven&#8217;t configured this yet, so it&#8217;s blank.</p></dd>
+</dl>
+<div data-type="warning">
+<p>Ansible Container does not automatically pull base images to your local
+machine.<a data-type="indexterm" data-primary="Nginx" data-secondary="pulling base Nginx image for ac-nginx container"/> You must do that yourself before building the containers. For example,
+before you run <a data-type="xref" href="#container.yml"/>, you would need to pull the <code>nginx</code> base image
+that is required to build <span class="keep-together"><code>ac-nginx</code></span>:</p>
+
+<pre data-type="programlisting">$ docker pull nginx</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Building the containers</h3>
+
+<p>Finally, we&#8217;re<a data-type="indexterm" data-primary="Ansible Container" data-secondary="creating Docker images" data-tertiary="building containers"/><a data-type="indexterm" data-primary="ansible-container build command"/><a data-type="indexterm" data-primary="containers" data-secondary="building in Ansible Container"/> ready to build:</p>
+
+<pre data-type="programlisting">$ ansible-container build</pre>
+
+<p>The output should look like this:</p>
+
+<pre data-type="programlisting">Building Docker Engine context...
+Starting Docker build of Ansible Container Conductor image (please be patient)...
+Parsing conductor CLI args.
+Docker™ daemon integration engine loaded. Build starting.	project=ans-con
+Building service...	project=ans-con service=ac-nginx
+
+PLAY [ac-nginx] ****************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [ac-nginx]
+
+TASK [ghost-nginx : remove default config] *************************************
+changed: [ac-nginx]
+
+TASK [ghost-nginx : add ghost config] ******************************************
+changed: [ac-nginx]
+
+PLAY RECAP *********************************************************************
+ac-nginx                   : ok=3    changed=2    unreachable=0    failed=0
+
+Applied role to service	role=ghost-nginx service=ac-nginx
+Committed layer as image    image=sha256:5eb75981fc5117b3fca3207b194f3fa6c9ccb85
+7718f91d674ec53d86323ffe3 service=ac-nginx
+Build complete.	service=ac-nginx
+All images successfully built.
+Conductor terminated. Cleaning up.  command_rc=0 conductor_id=8c68ca4720beae5d9c
+7ca10ed70a3c08b207cd3f68868b3670dcc853abf9b62b save_container=False</pre>
+
+<p>Ansible Container uses a <code>{project}-{service}</code> convention for naming Docker
+images; the project name is determined by the directory where you run
+<code>ansible-container init</code>.
+In my case, the directory is named <em>ans-con</em>, so the image that will be created
+will be named <em>ans-con-ac-nginx</em>.</p>
+
+<p>Ansible will also always create a conductor image, named <code>{project}-conductor</code>.</p>
+
+<p>If you don&#8217;t want Ansible Container to use the directory name as the project
+name, you can specify a custom project name by passing the <code>--project-name</code> flag.</p>
+
+<p>If we run the following:</p>
+
+<pre data-type="programlisting">$ docker images</pre>
+
+<p>we&#8217;ll see the following new container images:</p>
+
+<pre data-type="programlisting">REPOSITORY         TAG            IMAGE ID      CREATED        SIZE
+ans-con-ac-nginx   20170424035545 5eb75981fc51  2 minutes ago  182 MB
+ans-con-ac-nginx   latest         5eb75981fc51  2 minutes ago  182 MB
+ans-con-conductor  latest         742cf2e046a3  2 minutes ago  622 MB</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Troubleshooting builds</h3>
+
+<p>If the build command fails with an error, you can learn more by viewing the logs
+generated by the Conductor container.<a data-type="indexterm" data-primary="Ansible Container" data-secondary="creating Docker images" data-tertiary="troubleshooting builds"/><a data-type="indexterm" data-primary="containers" data-secondary="building in Ansible Container" data-tertiary="troubleshooting builds"/> There are two ways to see the log.</p>
+
+<p>One way is to use the <code>--debug</code> flag when invoking <code>ansible-container</code>.</p>
+
+<p>If you don&#8217;t want to rerun with the <code>--debug</code> flag, you can get the log output from Docker. To
+get it, you need to get the ID of the Conductor container. Because the
+container will no longer be running, use the <code>ps -a</code> Docker command to find the
+ID of the exited container:</p>
+
+<pre data-type="programlisting">$ docker ps -a
+CONTAINER ID  IMAGE         COMMAND                  CREATED         STATUS
+78e78b9a1863  0c238eaf1819  "/bin/sh -c 'cd /_..."   21 minutes ago  Exited (1)</pre>
+
+<p>Once you have the ID, you can view the log output like this:</p>
+
+<pre data-type="programlisting">$ docker logs 78e78b9a1863</pre>
+</section>
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Running Locally</h2>
+
+<p>Ansible Container allows you to run multiple containers locally, just like
+Docker Compose.<a data-type="indexterm" data-primary="Docker" data-secondary="Ansible Container" data-tertiary="creating Docker images" data-startref="ix_DockACimg"/><a data-type="indexterm" data-primary="Ansible Container" data-secondary="creating Docker images" data-startref="ix_AnsContimg"/> The <em>container.yml</em> file is similar to the format
+of <em>docker-compose.yml</em>. We&#8217;ll extend our <em>container.yml</em> so that it behaves
+the same way as <a data-type="xref" href="#docker-compose.yml"/>.<a data-type="indexterm" id="ix_DockACloc" data-primary="Docker" data-secondary="Ansible Container" data-tertiary="running locally"/><a data-type="indexterm" id="ix_AnsContlocal" data-primary="Ansible Container" data-secondary="running locally"/> This is shown in
+<a data-type="xref" href="#container.yml-local"/>.</p>
+<div id="container.yml-local" data-type="example">
+<h5>container.yml, configured for local execution</h5>
+
+<pre data-type="programlisting">version: "2"
+settings:
+  conductor_base: debian:jessie
+services:
+  ac-nginx:
+    from: nginx
+    command: [nginx, -g, daemon off;]
+    roles:
+      - ghost-nginx
+    ports:
+      - "8443:443"
+      - "8000:80"
+    dev_overrides:  <a class="co" id="co_ansible_container_CO2-1" href="#callout_ansible_container_CO2-1"><img src="callouts/1.png" alt="1"/></a>
+      volumes:
+        - $PWD/certs:/certs
+      links:
+        - ghost
+  ghost: <a class="co" id="co_ansible_container_CO2-2" href="#callout_ansible_container_CO2-2"><img src="callouts/2.png" alt="2"/></a>
+    from: ghost
+    dev_overrides:
+      volumes:
+        - $PWD/ghostdata:/var/lib/ghost
+registries: {}</pre></div>
+
+<p>Note the changes from <a data-type="xref" href="#container.yml"/> to <a data-type="xref" href="#container.yml-local"/>:</p>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_ansible_container_CO2-1" href="#co_ansible_container_CO2-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>We&#8217;ve added a <code>dev_overrides</code> section to the <code>ac-nginx</code> service that
+contains data that is specific for running locally (i.e., not used for creating
+images or for deploying to production). For this service, that involves
+mounting the TLS certificates from the local filesystem and linking the
+container to the <code>ghost</code> container.</p></dd>
+<dt><a class="co" id="callout_ansible_container_CO2-2" href="#co_ansible_container_CO2-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>We&#8217;ve added a <code>ghost</code> service that contains the Ghost app. We didn&#8217;t need
+this previously because we aren&#8217;t creating a custom Ghost container; we&#8217;re just
+running the official one unmodified.</p></dd>
+</dl>
+
+<p>Note that while the syntax is similar to Docker Compose, it isn&#8217;t identical.
+For example, Ansible Container uses <code>from</code>, whereas Docker Compose uses <code>image</code>,
+and Docker Compose does not have a <code>dev_overrides</code> section.</p>
+
+<p>You can start the containers on your local machine by doing this:</p>
+
+<pre data-type="programlisting">$ ansible-container run</pre>
+
+<p class="pagebreak-before">You can stop them as follows:</p>
+
+<pre data-type="programlisting">$ ansible-container stop</pre>
+
+<p>If you want to stop all containers and delete all images that you&#8217;ve created, use the following:</p>
+
+<pre data-type="programlisting">$ ansible-container destroy</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Publishing Images to Registries</h2>
+
+<p>Once you are satisfied with your images, you&#8217;ll want to publish them to a
+registry so that you can deploy them.<a data-type="indexterm" data-primary="Docker" data-secondary="Ansible Container" data-tertiary="running locally" data-startref="ix_DockACloc"/><a data-type="indexterm" data-primary="Ansible Container" data-secondary="running locally" data-startref="ix_AnsContlocal"/><a data-type="indexterm" data-primary="images (Docker)" data-secondary="publishing to registries using Ansible Container"/><a data-type="indexterm" data-primary="Ansible Container" data-secondary="publishing images to registries"/><a data-type="indexterm" data-primary="Docker" data-secondary="Ansible Container" data-tertiary="publishing images to registries"/></p>
+
+<p>You&#8217;ll need to configure the registries section of <a data-type="xref" href="#container.yml"/> to specify a
+registry. For example, <a data-type="xref" href="#registries"/> shows how to configure
+<em>container.yml</em> to push images to the <em>ansiblebook</em> organization in the Docker
+registry.</p>
+<div id="registries" data-type="example">
+<h5>registries section of container.yml</h5>
+
+<pre data-type="programlisting">registries:
+  docker:
+    url: https://index.docker.io/v1/
+    namespace: ansiblebook</pre></div>
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Authenticating</h3>
+
+<p>The first time you push your image, you need to pass your username as a
+command-line<a data-type="indexterm" data-primary="Ansible Container" data-secondary="publishing images to registries" data-tertiary="authenticating"/> argument:</p>
+
+<pre data-type="programlisting">$ ansible-container push --username $YOUR_USERNAME</pre>
+
+<p>You&#8217;ll be prompted to enter your password.  The first time you push an image, Ansible Container stores your credentials
+in <em>~/.docker/config.json</em>, and on subsequent pushes you don&#8217;t need to specify
+a username or password anymore.</p>
+
+<p>The output looks like this:</p>
+
+<pre data-type="programlisting">Parsing conductor CLI args.
+Engine integration loaded. Preparing push.	engine=Docker™ daemon
+Tagging ansiblebook/ans-con-ac-nginx
+Pushing ansiblebook/ans-con-ac-nginx:20170430055647...
+The push refers to a repository [docker.io/ansiblebook/ans-con-ac-nginx]
+Preparing
+Pushing
+Mounted from library/nginx
+Pushed
+20170430055647: digest: sha256:50507495a9538e9865fe3038d56793a1620b9b372482667a
+Conductor terminated. Cleaning up.  command_rc=0 conductor_id=1d4cfa04a055c1040</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect3">
+<h3>Multiple registries</h3>
+
+<p>Ansible Container allows you to specify multiple registries.<a data-type="indexterm" data-primary="Ansible Container" data-secondary="publishing images to registries" data-tertiary="multiple registries"/><a data-type="indexterm" data-primary="registry (Docker images)" data-secondary="publishing images to multiple registries"/> For example, here
+is a <code>registries</code> section that has two registries, Docker Hub and Quay:</p>
+
+<pre data-type="programlisting">registries:
+  docker:
+    namespace: ansiblebook
+    url: https://index.docker.io/v1/
+  quay:
+    namespace: ansiblebook
+    url: https://quay.io</pre>
+
+<p>To push images to only one of the registries, use the <code>--push-to</code> flag. For
+example, this pushes to the Quay registry:</p>
+
+<pre data-type="programlisting">$ ansible-container push --push-to quay</pre>
+</section>
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Deploying Containers to Production</h2>
+
+<p>Although we don&#8217;t cover it here, Ansible Container also has support for
+deploying your containers to a production environment, using the
+<code>ansible-container deploy</code> command. <a data-type="indexterm" data-primary="Ansible Container" data-secondary="deploying containers to production"/><a data-type="indexterm" data-primary="Docker" data-secondary="Ansible Container" data-tertiary="deploying containers to production"/>As of this writing, Ansible Container
+has support for deploying to two container management platforms:
+OpenShift and Kubernetes.</p>
+
+<p>If you are looking for an Ansible Container-supported public cloud for running your containers,<a data-type="indexterm" data-primary="cloud" data-secondary="Ansible Container-supported public clouds"/> Red Hat
+operates an OpenShift-based cloud platform called OpenShift Online, and Google
+provides Kubernetes as part of its Google Compute Engine cloud platform.<a data-type="indexterm" data-primary="Kubernetes"/><a data-type="indexterm" data-primary="OpenShift"/> Both
+platforms are also open source, so if you manage your own hardware, you can
+deploy either OpenShift or Kubernetes on them for free. If you want to deploy on another platform (e.g.,
+EC2 Container Service or Azure Container Service), you won&#8217;t be able to
+use Ansible Container for the deployment.<a data-type="indexterm" data-primary="Docker" data-secondary="Ansible Container" data-startref="ix_DockAC"/><a data-type="indexterm" data-primary="Ansible Container" data-startref="ix_AnsCont"/></p>
+</section>
+
+
+
+
+
+</section>

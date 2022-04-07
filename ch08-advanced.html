@@ -1,0 +1,1772 @@
+<section data-type="chapter" id="more_on_playbooks_a">
+<h1>Complex Playbooks</h1>
+
+
+<p>In the preceding chapter, we went over a fully functional Ansible playbook for
+deploying the Mezzanine CMS.<a data-type="indexterm" id="ix_playbkadv" data-primary="playbooks" data-secondary="advanced features"/> That example used some common Ansible
+features, but it didn&#8217;t cover all of them. This chapter touches on those
+additional features, which makes it a bit of a grab bag.</p>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Dealing with Badly Behaved Commands: changed_when and failed_when</h1>
+
+<p>Recall that in <a data-type="xref" href="#deploying_mezzanine"/>, we avoided invoking the custom <code>createdb manage.py</code> command, shown in <a data-type="xref" href="#django_manage_createdb"/>, because the call wasn&#8217;t idempotent.<a data-type="indexterm" data-primary="createdb command"/><a data-type="indexterm" data-primary="django-manage commands" data-secondary="createdb"/><a data-type="indexterm" id="ix_playbkadvcomm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="dealing with badly behaved commands"/></p>
+<div id="django_manage_createdb" data-type="example">
+<h5>Calling django manage.py createdb</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"</pre></div>
+
+<p>We got around this problem by invoking several <code>django manage.py</code> commands that
+were idempotent, and that did the equivalent of <code>createdb</code>. But what if we didn&#8217;t
+have a module that could invoke equivalent commands? The answer is to use
+<code>changed_when</code> and <code>failed_when</code> clauses to change how Ansible identifies that a
+task has changed state or failed.<a data-type="indexterm" data-primary="changed_when clause"/><a data-type="indexterm" data-primary="failed_when clause"/></p>
+
+<p>First, we need to understand the output of this command the first time
+it&#8217;s run, and the output when it&#8217;s run the second time.</p>
+
+<p>Recall from <a data-type="xref" href="#variables_and_facts"/> that to capture the output of a failed task, you add a <code>register</code> clause to save the output to<a data-type="indexterm" data-primary="tasks" data-secondary="failed" data-tertiary="capturing output of"/> a variable and a <code>failed_when: False</code> clause so that the execution doesn&#8217;t stop even if the module returns failure. Then add a <code>debug</code> task to print out the variable, and finally a <code>fail</code> clause so that the playbook stops executing, as shown in <a data-type="xref" href="#viewing_output_of_task"/>.</p>
+<div id="viewing_output_of_task" data-type="example">
+<h5>Viewing the output of a task</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  failed_when: False
+  register: result
+
+- debug: var=result
+
+- fail:</pre></div>
+
+<p>The output of the playbook when invoked the second time is shown in <a data-type="xref" href="#invoked_second_time"/>.</p>
+<div id="invoked_second_time" data-type="example">
+<h5>Returned values when database has already been created</h5>
+
+<pre data-type="programlisting" class="c_less_space">TASK: [debug var=result] ******************************************************
+ok: [default] =&gt; {
+    "result": {
+        "cmd": "python manage.py createdb --noinput --nodata",
+        "failed": false,
+        "failed_when_result": false,
+        "invocation": {
+            "module_args": '',
+            "module_name": "django_manage"
+        },
+        "msg": "\n:stderr: CommandError: Database already created, you probably
+want the syncdb or migrate command\n",
+        "path":
+"/home/vagrant/mezzanine_example/bin:/usr/local/sbin:/usr/local/bin:
+/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games",
+        "state": "absent",
+        "syspath": [
+            ``,
+            "/usr/lib/python2.7",
+            "/usr/lib/python2.7/plat-x86_64-linux-gnu",
+            "/usr/lib/python2.7/lib-tk",
+            "/usr/lib/python2.7/lib-old",
+            "/usr/lib/python2.7/lib-dynload",
+            "/usr/local/lib/python2.7/dist-packages",
+            "/usr/lib/python2.7/dist-packages"
+        ]
+    }
+}</pre></div>
+
+<p>This is what happens when the task has been run multiple times. To see
+what happens the first time, delete the database and then have the playbook re-create it. The simplest way to do that is to run an Ansible ad hoc task that deletes the database:</p>
+
+<pre data-type="programlisting">$ ansible default --become --become-user postgres -m postgresql_db -a \
+"name=mezzanine_example state=absent"</pre>
+
+<p>Now when I run the playbook again, I get the output in <a data-type="xref" href="#invoked_first_time"/>.</p>
+<div id="invoked_first_time" data-type="example">
+<h5>Returned values when invoked the first time</h5>
+
+<pre data-type="programlisting">ASK: [debug var=result] ******************************************************
+ok: [default] =&gt; {
+    "result": {
+        "app_path": "/home/vagrant/mezzanine_example/project",
+        "changed": false,
+        "cmd": "python manage.py createdb --noinput --nodata",
+        "failed": false,
+        "failed_when_result": false,
+        "invocation": {
+            "module_args": '',
+            "module_name": "django_manage"
+        },
+        "out": "Creating tables ...\nCreating table auth_permission\nCreating
+table auth_group_permissions\nCreating table auth_group\nCreating table
+auth_user_groups\nCreating table auth_user_user_permissions\nCreating table
+auth_user\nCreating table django_content_type\nCreating table
+django_redirect\nCreating table django_session\nCreating table
+django_site\nCreating table conf_setting\nCreating table
+core_sitepermission_sites\nCreating table core_sitepermission\nCreating table
+generic_threadedcomment\nCreating table generic_keyword\nCreating table
+generic_assignedkeyword\nCreating table generic_rating\nCreating table
+blog_blogpost_related_posts\nCreating table blog_blogpost_categories\nCreating
+table blog_blogpost\nCreating table blog_blogcategory\nCreating table
+forms_form\nCreating table forms_field\nCreating table forms_formentry\nCreating
+table forms_fieldentry\nCreating table pages_page\nCreating table
+pages_richtextpage\nCreating table pages_link\nCreating table
+galleries_gallery\nCreating table galleries_galleryimage\nCreating table
+twitter_query\nCreating table twitter_tweet\nCreating table
+south_migrationhistory\nCreating table django_admin_log\nCreating table
+django_comments\nCreating table django_comment_flags\n\nCreating default site
+record: vagrant-ubuntu-trusty-64 ... \n\nInstalled 2 object(s) from 1
+fixture(s)\nInstalling custom SQL ...\nInstalling indexes ...\nInstalled 0
+object(s) from 0 fixture(s)\n\nFaking initial migrations ...\n\n",
+        "pythonpath": null,
+        "settings": null,
+        "virtualenv": "/home/vagrant/mezzanine_example"
+    }
+}</pre></div>
+
+<p>Note that <code>changed</code> is set to <code>false</code> even though it did, indeed, change the
+state of the database. That&#8217;s because the <code>django_manage</code> module always returns
+<code>changed=false</code> when it runs commands that the module doesn&#8217;t know about.</p>
+
+<p>We can add a <code>changed_when</code> clause that looks for <code>"Creating tables"</code> in the <code>out</code> return value,<a data-type="indexterm" data-primary="changed_when clause"/> as shown in <a data-type="xref" href="#adding_changed_when_fail"/>.</p>
+<div id="adding_changed_when_fail" data-type="example">
+<h5>First attempt at adding changed_when</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  register: result
+  changed_when: '"Creating tables" in result.out'</pre></div>
+
+<p>The problem with this approach is that, if we look back at
+<a data-type="xref" href="#invoked_second_time"/>, we see that there is no <code>out</code> variable. Instead, there&#8217;s a <code>msg</code> variable. If we executed the playbook, we&#8217;d get the following (not terribly helpful) error the second time:</p>
+
+<pre data-type="programlisting">TASK: [initialize the database] ********************************************
+fatal: [default] =&gt; error while evaluating conditional: "Creating tables" in
+result.out</pre>
+
+<p>Instead, we need to ensure that Ansible evaluates <code>result.out</code> only if that variable is defined. One way is to explicitly check whether the variable is
+defined:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">changed_when: result.out is defined and "Creating tables" in result.out</pre>
+
+<p>Alternatively, we could provide a default value for <code>result.out</code> if it doesn&#8217;t exist by using the Jinja2 <code>default</code> filter:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">changed_when: '"Creating tables" in result.out|default("")'</pre>
+
+<p>The final idempotent<a data-type="indexterm" data-primary="createdb command" data-secondary="idempotent manage.py createdb"/> task is shown in <a data-type="xref" href="#idempotent_createdb"/>.</p>
+<div id="idempotent_createdb" data-type="example">
+<h5>Idempotent manage.py createdb</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: initialize the database
+  django_manage:
+    command: createdb --noinput --nodata
+    app_path: "{{ proj_path }}"
+    virtualenv: "{{ venv_path }}"
+  register: result
+  changed_when: '"Creating tables" in result.out|default("")'</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Filters</h1>
+
+<p><em>Filters</em> are a feature of the Jinja2 templating engine.<a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="dealing with badly behaved commands" data-startref="ix_playbkadvcomm"/> Since Ansible
+uses Jinja2 for evaluating variables, as well as for templates, you can use filters inside <code>{{ braces }}</code> in your playbooks, as well as inside your template files. <a data-type="indexterm" data-primary="{{ }} (braces notation)" data-secondary="filters in"/><a data-type="indexterm" id="ix_Jinjafil" data-primary="Jinja2 template engine" data-secondary="filters"/><a data-type="indexterm" id="ix_filter" data-primary="filters"/><a data-type="indexterm" id="ix_playbkadvfil" data-primary="playbooks" data-secondary="advanced features" data-tertiary="filters"/> Using filters resembles using Unix pipes, whereby a variable is piped through a filter. Jinja2 ships with a set of <a href="http://bit.ly/1FvOGzI">built-in filters</a>.
+In addition, Ansible ships with its own filters to augment the <a href="http://bit.ly/1FvOIrj">Jinja2 filters</a>.</p>
+
+<p>We&#8217;ll cover a few sample filters here, but check out the official Jinja2 and Ansible docs for a complete list of the available filters.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>The Default Filter</h2>
+
+<p>The <code>default</code> filter is a useful one. <a data-type="indexterm" data-primary="filters" data-secondary="default"/><a data-type="indexterm" data-primary="default filter"/>Here&#8217;s an example of this filter in action:</p>
+
+<pre data-type="programlisting">"HOST": "{{ database_host | default('localhost') }}",</pre>
+
+<p>If the variable <code>database_host</code> is defined, the braces will evaluate to the value of that variable. If the variable <code>database_host</code> is not defined, the braces will evaluate to the string <code>localhost</code>. Some filters take arguments, and some don&#8217;t.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Filters for Registered Variables</h2>
+
+<p>Let&#8217;s say we want to run a task and print out its output, even if the task fails.<a data-type="indexterm" data-primary="variables" data-secondary="registered, filters for"/><a data-type="indexterm" data-primary="filters" data-secondary="for registered variables"/> However, if the task does fail, we want Ansible to fail for that host after printing the output. <a data-type="xref" href="#using_failed_filter"/> shows how to use the <code>failed</code> filter<a data-type="indexterm" data-primary="failed filter"/> in the argument to the <code>failed_when</code> clause.<a data-type="indexterm" data-primary="failed_when clause"/></p>
+<div id="using_failed_filter" data-type="example">
+<h5>Using the failed filter</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: Run myprog
+  command: /opt/myprog
+  register: result
+  ignore_errors: True
+
+- debug: var=result
+
+- debug: msg="Stop running the playbook if myprog failed"
+  failed_when: result|failed
+# more tasks here</pre></div>
+
+<p><a data-type="xref" href="#table_return_value_filter"/> shows a list of filters you can use on registered variables to check the status.<a data-type="indexterm" data-primary="tasks" data-secondary="return value filters"/></p>
+<table id="table_return_value_filter">
+<caption>Task return value filters</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>failed</p></td>
+<td><p>True if a registered value is a task that failed</p></td>
+</tr>
+<tr>
+<td><p>changed</p></td>
+<td><p>True if a registered value is a task that changed</p></td>
+</tr>
+<tr>
+<td><p>success</p></td>
+<td><p>True if a registered value is a task that succeeded</p></td>
+</tr>
+<tr>
+<td><p>skipped</p></td>
+<td><p>True if a registered value is a task that was skipped</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Filters That Apply to File Paths</h2>
+
+<p><a data-type="xref" href="#table_filters_file_paths"/> shows filters that are useful when a variable contains
+the path to a file on the control machine&#8217;s filesystem.<a data-type="indexterm" data-primary="filters" data-secondary="for file paths"/><a data-type="indexterm" data-primary="file paths, filters applying to"/><a data-type="indexterm" data-primary="paths" data-secondary="filters applying to file paths"/></p>
+<table id="table_filters_file_paths">
+<caption>File path filters</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>basename</p></td>
+<td><p>Base name of file path</p></td>
+</tr>
+<tr>
+<td><p>dirname</p></td>
+<td><p>Directory of file path</p></td>
+</tr>
+<tr>
+<td><p>expanduser</p></td>
+<td><p>File path with <code>~</code> replaced by home directory</p></td>
+</tr>
+<tr>
+<td><p>realpath</p></td>
+<td><p>Canonical path of file path, resolves symbolic links</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>Consider this playbook fragment:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">  vars:
+    homepage: /usr/share/nginx/html/index.html
+  tasks:
+  - name: copy home page
+    copy: src=files/index.html dest={{ homepage }}</pre>
+
+<p>Note that it references <em>index.html</em> twice: once in the definition of the <code>homepage</code> variable, and a second time to specify the path to the file on the control machine.<a data-type="indexterm" data-primary="basename filter"/></p>
+
+<p>The <code>basename</code> filter will let us extract the <em>index.html</em> part of the filename from the full path, allowing us to write the playbook without repeating the filename:<span data-type="footnote">Thanks to John Jarvis for this tip.</span></p>
+
+<pre data-type="programlisting" data-code-language="yaml">  vars:
+    homepage: /usr/share/nginx/html/index.html
+  tasks:
+  - name: copy home page
+    copy: src=files/{{ homepage | basename }} dest={{ homepage }}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Writing Your Own Filter</h2>
+
+<p>Recall that in our Mezzanine example, we generated the <em>local_settings.py</em> file from a template, and a line in<a data-type="indexterm" data-primary="filters" data-secondary="writing your own"/> the generated file looks like <a data-type="xref" href="#line_generated_by_template"/>.</p>
+<div id="line_generated_by_template" data-type="example">
+<h5>Line from local_settings.py generated by template</h5>
+
+<pre data-type="programlisting" data-code-language="python">ALLOWED_HOSTS = ["www.example.com", "example.com"]</pre></div>
+
+<p>We had a variable named <code>domains</code> that contained a list of the hostnames. We originally used a <code>for</code> loop in our template to generate this line, but a filter would be an even more elegant approach.</p>
+
+<p>There is a built-in Jinja2 filter called <code>join</code> that will join a list of strings with a delimiter such as a comma.<a data-type="indexterm" data-primary="join filter in Jinja2"/> Unfortunately, it doesn&#8217;t quite give us what we want. If we did this in the template:</p>
+
+<pre data-type="programlisting">ALLOWED_HOSTS = [{{ domains|join(", ") }}]</pre>
+
+<p>then we would end up with the strings <a data-type="indexterm" data-primary="strings" data-secondary="quoting, writing a filter for"/><a data-type="indexterm" data-primary="quotation marks" data-secondary="filter for quoting strings"/>unquoted in our file, as shown in
+<a data-type="xref" href="#strings_incorrectly_unquoted"/>.</p>
+<div id="strings_incorrectly_unquoted" data-type="example">
+<h5>Strings incorrectly unquoted</h5>
+
+<pre data-type="programlisting" data-code-language="python">ALLOWED_HOSTS = [www.example.com, example.com]</pre></div>
+
+<p>If we had a Jinja2 filter that quoted the strings in the list, as shown in <a data-type="xref" href="#quoting_strings_filter"/>, then the template would generate the output depicted in <a data-type="xref" href="#line_generated_by_template"/>.</p>
+<div id="quoting_strings_filter" data-type="example">
+<h5>Using a filter to quote the strings in the list</h5>
+
+<pre data-type="programlisting">ALLOWED_HOSTS = [{{ domains|surround_by_quote|join(", ") }}]</pre></div>
+
+<p>Unfortunately, there&#8217;s no existing <code>surround_by_quote</code> filter that does what we want.<a data-type="indexterm" data-primary="surround_by_quotes custom filter"/> However, we can write it ourselves. (In fact, Hanfei Sun on Stack Overflow covered <a href="http://stackoverflow.com/questions/15514365/">this very topic</a>.)</p>
+
+<p>Ansible will look for custom filters in the <em>filter_plugins</em> directory, relative to the directory containing your playbooks.<a data-type="indexterm" data-primary="filter_plugins directory"/></p>
+
+<p><a data-type="xref" href="#surround_by_quotes"/> shows what the filter implementation looks like.</p>
+<div id="surround_by_quotes" data-type="example">
+<h5>filter_plugins/surround_by_quotes.py</h5>
+
+<pre data-type="programlisting" data-code-language="python"># From http://stackoverflow.com/a/15515929/742
+
+def surround_by_quote(a_list):
+    return ['"%s"' % an_element for an_element in a_list]
+
+
+class FilterModule(object):
+    def filters(self):
+        return {'surround_by_quote': surround_by_quote}</pre></div>
+
+<p>The <code>surround_by_quote</code> function defines the Jinja2 filter. The <code>FilterModule</code> class defines a <code>filters</code> method that returns a dictionary with the name of the filter function and the function itself.<a data-type="indexterm" data-primary="FilterModule class, filters method"/> The <code>FilterModule</code> class is Ansible-specific code that makes the Jinja2 filter available to Ansible.</p>
+
+<p>You can also place filter plugins in the <em>~/.ansible/plugins/filter</em> directory, or the <em>/usr/share/ansible/plugins/filter</em> directory, or you can specify the directory by setting the <code>ANSIBLE_FILTER_PLUGINS</code> environment variable to the directory where your plugins are located.<a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="filters" data-startref="ix_Jinjafil"/><a data-type="indexterm" data-primary="filters" data-startref="ix_filter"/><a data-type="indexterm" data-primary="playbooks" data-secondary="advanced" data-tertiary="filters" data-startref="ix_playbkadvfil"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Lookups</h1>
+
+<p>In an ideal world, all of your configuration information would be stored as Ansible variables, <a data-type="indexterm" data-primary="variables"/>in the various places that Ansible lets you define variables (e.g., the <code>vars</code> section of your playbooks, files loaded by <code>vars_files</code>, files in the <em>host_vars</em> or <em>group_vars</em>
+directory that we discussed in <a data-type="xref" href="#inventory"/>).<a data-type="indexterm" id="ix_playbkadvLU" data-primary="playbooks" data-secondary="advanced features" data-tertiary="lookups"/><a data-type="indexterm" id="ix_lookup" data-primary="lookups"/></p>
+
+<p>Alas, the world is a messy place, and sometimes a piece of configuration data you need lives somewhere else.<a data-type="indexterm" data-primary="Don&#x27;t Repeat Yourself (DRY) principle"/> Maybe it&#8217;s in a text file or a <em>.csv</em> file, and you don&#8217;t want to just copy the data into an Ansible variable file because now you have to maintain two copies of the same data, and you believe in the DRY<span data-type="footnote">Don&#8217;t Repeat Yourself, a term popularized by <a href="#pragprog"><em>The Pragmatic Programmer: From Journeyman to Master</em></a>, which is a fantastic book.</span> principle. <a data-type="indexterm" data-primary="CoreOS project, etcd"/>Or maybe the data isn&#8217;t maintained as a file at all;
+it&#8217;s maintained in <a data-type="indexterm" data-primary="etcd (key-value store)"/>a key-value storage service such as <em>etcd</em>.<span data-type="footnote">etcd is a distributed key-value store maintained by the <a href="https://coreos.com/docs/etcd/">CoreOS project</a>.</span> Ansible has a feature called <em>lookups</em> that allows you to read in configuration data from various sources and then use that data in your playbooks and template.</p>
+
+<p>Ansible supports a collection of lookups for retrieving data from different
+sources.<a data-type="indexterm" data-primary="lookups" data-secondary="available in Ansible"/> Some of
+the lookups are shown in <a data-type="xref" href="#lookups"/>.</p>
+<table id="lookups">
+<caption>Lookups</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>file</p></td>
+<td><p>Contents of a file</p></td>
+</tr>
+<tr>
+<td><p>password</p></td>
+<td><p>Randomly generate a password</p></td>
+</tr>
+<tr>
+<td><p>pipe</p></td>
+<td><p>Output of locally executed command</p></td>
+</tr>
+<tr>
+<td><p>env</p></td>
+<td><p>Environment variable</p></td>
+</tr>
+<tr>
+<td><p>template</p></td>
+<td><p>Jinja2 template after evaluation</p></td>
+</tr>
+<tr>
+<td><p>csvfile</p></td>
+<td><p>Entry in a <em>.csv</em> file</p></td>
+</tr>
+<tr>
+<td><p>dnstxt</p></td>
+<td><p>DNS TXT record</p></td>
+</tr>
+<tr>
+<td><p>redis_kv</p></td>
+<td><p>Redis key lookup</p></td>
+</tr>
+<tr>
+<td><p>etcd</p></td>
+<td><p>etcd key lookup</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>You invoke lookups by calling the <code>lookup</code> function with two arguments.<a data-type="indexterm" data-primary="lookup function"/> The first is a string with the name of the lookup, and the second is a string that contains one or more arguments to pass to the lookup. For example, we call the <code>file</code> lookup like this:</p>
+
+<pre data-type="programlisting">lookup('file', '/path/to/file.txt')</pre>
+
+<p>You can invoke lookups in your playbooks between <code>{{ braces }}</code>, or you can put them in templates.<a data-type="indexterm" data-primary="{{ }} (braces notation)" data-secondary="lookups in"/></p>
+
+<p>In this section, I provided only a brief overview of lookups that are available. The Ansible documentation provides <a href="http://docs.ansible.com/playbooks_lookups.html">more details</a> on available lookups and how to use them.</p>
+<div data-type="note">
+<p>All Ansible lookup plugins execute on the control machine, not the remote host.</p>
+</div>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>file</h2>
+
+<p>Let&#8217;s say you have a text file on your control machine that contains a public SSH key that you want<a data-type="indexterm" data-primary="lookups" data-secondary="file"/><a data-type="indexterm" data-primary="file lookup"/> to copy to a remote server. <a data-type="xref" href="#FILE_LOOKUP"/> shows how to use the <code>file</code> lookup to read the contents of a file and pass that as a parameter to a module.</p>
+<div id="FILE_LOOKUP" data-type="example">
+<h5>Using the file lookup</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: Add my public key as an EC2 key
+  ec2_key: name=mykey key_material="{{ lookup('file', \
+  '/Users/lorin/.ssh/id_rsa.pub') }}"</pre></div>
+
+<p>You can invoke lookups in templates as well.<a data-type="indexterm" data-primary="template module" data-secondary="invoking lookups"/> If we want to use the same technique to create an <em>authorized_keys</em> file that contains the contents of a public-key file, we could create a Jinja2 template that invokes the lookup, as shown in <a data-type="xref" href="#authorized_keys_template"/>, and then call the <code>template</code> module in our playbook, as shown in <a data-type="xref" href="#authorized_keys_task"/>.</p>
+<div id="authorized_keys_template" data-type="example">
+<h5>authorized_keys.j2</h5>
+
+<pre data-type="programlisting">{{ lookup('file', '/Users/lorin/.ssh/id_rsa.pub') }}</pre></div>
+<div id="authorized_keys_task" data-type="example">
+<h5>Task to generate authorized_keys</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: copy authorized_host file
+  template: src=authorized_keys.j2 dest=/home/deploy/.ssh/authorized_keys</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>pipe</h2>
+
+<p>The <code>pipe</code> lookup invokes an external program on the control machine and evaluates to the program&#8217;s output on standard out.<a data-type="indexterm" data-primary="pipe lookup"/><a data-type="indexterm" data-primary="lookups" data-secondary="pipe"/></p>
+
+<p>For example, if our playbooks are version controlled using <code>git</code>, and we want to get the <code>SHA-1</code> value of the most recent <code>git commit</code>,<span data-type="footnote">If this sounds like gibberish, don&#8217;t worry about it; it&#8217;s just an example of running a command.</span> we could use the <code>pipe</code> lookup:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: get SHA of most recent commit
+  debug: msg="{{ lookup('pipe', 'git rev-parse HEAD') }}"</pre>
+
+<p>The output looks something like this:</p>
+
+<pre data-type="programlisting">TASK: [get the sha of the current commit] *************************************
+ok: [myserver] =&gt; {
+    "msg": "e7748af0f040d58d61de1917980a210df419eae9"
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>env</h2>
+
+<p>The <code>env</code> lookup retrieves the value of an environment variable set on the control machine.<a data-type="indexterm" data-primary="env lookup"/><a data-type="indexterm" data-primary="lookups" data-secondary="env"/> For example, we could use the lookup like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: get the current shell
+  debug: msg="{{ lookup('env', 'SHELL') }}"</pre>
+
+<p>Since I use Zsh as my shell,<a data-type="indexterm" data-primary="Zsh shell"/> the output looks like this when I run it:</p>
+
+<pre data-type="programlisting">TASK: [get the current shell] *************************************************
+ok: [myserver] =&gt; {
+    "msg": "/bin/zsh"
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>password</h2>
+
+<p>The <code>password</code> lookup evaluates to a random password, and it will also write the password to a file specified in the argument.<a data-type="indexterm" data-primary="password lookup"/><a data-type="indexterm" data-primary="lookups" data-secondary="password"/><a data-type="indexterm" data-primary="PostgreSQL" data-secondary="creating deploy user"/> For example, if we want to create a Postgres user named <code>deploy</code> with a random password and write that password to <em>deploy-password.txt</em> on the control machine, we can do this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create deploy postgres user
+  postgresql_user:
+    name: deploy
+    password: "{{ lookup('password', 'deploy-password.txt') }}"</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>template</h2>
+
+<p>The <code>template</code> lookup lets you specify a Jinja2 template file, and then returns the result of evaluating the template.<a data-type="indexterm" data-primary="Jinja2 template engine" data-secondary="template lookup"/><a data-type="indexterm" data-primary="template lookup"/><a data-type="indexterm" data-primary="lookups" data-secondary="template"/> Say we have a template that looks like <a data-type="xref" href="#message_j2"/>.</p>
+<div id="message_j2" data-type="example">
+<h5>message.j2</h5>
+
+<pre data-type="programlisting">This host runs {{ ansible_distribution }}</pre></div>
+
+<p>If we define a task like this:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: output message from template
+  debug: msg="{{ lookup('template', 'message.j2') }}"</pre>
+
+<p>then we&#8217;ll see output that looks like this:</p>
+
+<pre data-type="programlisting">TASK: [output message from template] ******************************************
+ok: [myserver] =&gt; {
+    "msg": "This host runs Ubuntu\n"
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>csvfile</h2>
+
+<p>The <code>csvfile</code> lookup reads an entry from a <em>.csv</em> file.<a data-type="indexterm" data-primary="csvfile lookup"/><a data-type="indexterm" data-primary="lookups" data-secondary="csvfile"/> Assume we have a <em>.csv</em> file that looks like <a data-type="xref" href="#example_csv_file"/>.</p>
+<div id="example_csv_file" data-type="example">
+<h5>users.csv</h5>
+
+<pre data-type="programlisting">username,email
+lorin,lorin@ansiblebook.com
+john,john@example.com
+sue,sue@example.org</pre></div>
+
+<p>If we want to extract Sue&#8217;s email address by using the <code>csvfile</code> lookup plugin, we would invoke the lookup plugin like this:</p>
+
+<pre data-type="programlisting">lookup('csvfile', 'sue file=users.csv delimiter=, col=1')</pre>
+
+<p>The <code>csvfile</code> lookup is a good example of a lookup that takes multiple arguments.<a data-type="indexterm" data-primary="csvfile lookup" data-secondary="multiple arguments"/> Here, four arguments are being passed to the plugin:</p>
+
+<ul class="pagebreak-before">
+<li>
+<p><code>sue</code></p>
+</li>
+<li>
+<p><code>file=users.csv</code></p>
+</li>
+<li>
+<p><code>delimiter=,</code></p>
+</li>
+<li>
+<p><code>col=1</code></p>
+</li>
+</ul>
+
+<p>You don&#8217;t specify a name for the first argument to a lookup plugin, but you do specify names for the additional arguments. In the case of <code>csvfile</code>, the first argument is an entry that must appear exactly once in column 0 (the first column, 0-indexed) of the table.</p>
+
+<p>The other arguments specify the name of the <em>.csv</em> file, the delimiter, and which column should be returned. In our example, we want to look in the file named <em>users.csv</em> and locate where the fields are delimited by commas, look up the row where the value in the first column is <code>sue</code>, and return the value in the second column (column 1, indexed by 0). This evaluates to <em>sue@example.org</em>.</p>
+
+<p>If the username we want to look up is stored in a variable named <code>username</code>, we could construct the argument string by using the <code>+</code> sign to concatenate the <code>username</code> string with the rest of the argument string:</p>
+
+<pre data-type="programlisting">lookup('csvfile', username + ' file=users.csv delimiter=, col=1')</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>dnstxt</h2>
+<div data-type="note">
+<p>The <code>dnstxt</code> module requires that you install the <em>dnspython</em> Python package on the control machine.<a data-type="indexterm" data-primary="dnstext lookup"/></p>
+</div>
+
+<p>If you&#8217;re reading this book, you&#8217;re probably aware of what the Domain Name System (DNS) does, but just in case you aren&#8217;t, DNS is the service that translates hostnames such as <em>ansiblebook.com</em> to IP addresses such as <em>64.99.80.30</em>.<a data-type="indexterm" data-primary="hostnames" data-secondary="translation to IP addresses by DNS"/><a data-type="indexterm" data-primary="DNS"/></p>
+
+<p>DNS works by associating one or more records with a hostname. The most commonly used types of DNS records are <em>A</em> records and <em>CNAME</em> records, which associate a hostname with an IP address (A record) or specify that a hostname is an alias for another hostname (CNAME record).<a data-type="indexterm" data-primary="A records (DNS)"/><a data-type="indexterm" data-primary="CNAME records (DNS)"/></p>
+
+<p>The DNS protocol supports another type of record that you can associate with a hostname, called a <em>TXT</em> record.<a data-type="indexterm" data-primary="TXT records (DNS)"/> A TXT record is just an arbitrary string that you can attach to a hostname. Once you&#8217;ve associated a TXT record with a hostname, anybody can retrieve the text by using a DNS client.</p>
+
+<p>For example, I own the <em>ansiblebook.com</em> domain, so I can create TXT records associated with any hostnames in that domain.<span data-type="footnote">DNS service providers typically have web interfaces to let you perform DNS-related tasks such as creating TXT records.</span> I associated a TXT record with the <em>ansiblebook.com</em> hostname that contains the ISBN number for this book. You can look up the TXT record by using <a data-type="indexterm" data-primary="dig tool, looking up DNS TXT records"/>the <code>dig</code> command-line tool, as shown in <a data-type="xref" href="#txt_record"/>.</p>
+<div id="txt_record" data-type="example">
+<h5>Using the dig tool to look up a TXT record</h5>
+
+<pre data-type="programlisting" data-code-language="console">$ dig +short ansiblebook.com TXT
+"isbn=978-1491979808"</pre></div>
+
+<p>The <code>dnstxt</code> lookup queries the DNS server for the TXT record associated with the host. If we create a task like this in a playbook:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: look up TXT record
+  debug: msg="{{ lookup('dnstxt', 'ansiblebook.com') }}"</pre>
+
+<p>the output will look like this:</p>
+
+<pre data-type="programlisting">TASK: [look up TXT record] ****************************************************
+ok: [myserver] =&gt; {
+    "msg": "isbn=978-1491979808"
+}</pre>
+
+<p>If multiple TXT records are associated with a host, the module will concatenate them together, and it might do this in a different order each time it is called. For example, if there were a second TXT record on <em>ansiblebook.com</em> with this text:</p>
+
+<pre data-type="programlisting">author=lorin</pre>
+
+<p>then the <em>dnstxt</em> lookup would randomly return one of the two:</p>
+
+<ul>
+<li>
+<p><code>isbn=978-1491979808author=lorin</code></p>
+</li>
+<li>
+<p><code>author=lorinisbn=978-1491979808</code></p>
+</li>
+</ul>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>redis_kv</h2>
+<div data-type="note">
+<p>The <code>redis_kv</code> module requires that you install the <em>redis</em> Python package on the control machine.<a data-type="indexterm" data-primary="Python" data-secondary="redis package"/><a data-type="indexterm" data-primary="redis_kv module"/></p>
+</div>
+
+<p>Redis is a popular key-value store,<a data-type="indexterm" data-primary="Redis"/> commonly used as a cache, as well as a data store for job queue services such as Sidekiq.<a data-type="indexterm" data-primary="lookups" data-secondary="redis_kv"/><a data-type="indexterm" data-primary="key-value stores" data-secondary="Redis"/> You can use the <code>redis_kv</code> lookup to retrieve the value of a key. The key must be a string, as the module does the equivalent of calling the Redis <code>GET</code> command.</p>
+
+<p>For example, let&#8217;s say that we have a Redis server running on our control machine, and we set the key <code>weather</code> to the value <code>sunny</code>, by doing something like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ redis-cli SET weather sunny</pre>
+
+<p>If we define a task in our playbook that invokes the Redis lookup:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: look up value in Redis
+  debug: msg="{{ lookup('redis_kv', 'redis://localhost:6379,weather') }}"</pre>
+
+<p>the output will look like this:</p>
+
+<pre data-type="programlisting">TASK: [look up value in Redis] ************************************************
+ok: [myserver] =&gt; {
+    "msg": "sunny"
+}</pre>
+
+<p>The module will default to <em>redis://localhost:6379</em> if the URL isn&#8217;t specified,
+so we could invoke the module like this instead (note the comma before the
+key):</p>
+
+<pre data-type="programlisting">lookup('redis_kv', ',weather')</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>etcd</h2>
+
+<p>Etcd is a distributed key-value store, commonly used for keeping configuration
+data and for implementing service discovery.<a data-type="indexterm" data-primary="etcd (key-value store)"/><a data-type="indexterm" data-primary="key-value stores" data-secondary="etcd"/><a data-type="indexterm" data-primary="etcd lookup"/><a data-type="indexterm" data-primary="lookups" data-secondary="etcd"/> You can use the <code>etcd</code> lookup to
+retrieve the value of a key.</p>
+
+<p>For example, let&#8217;s say that we have an <code>etcd</code> server running on our control machine, and we set the key <code>weather</code> to the value <code>cloudy</code> by doing something like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ curl -L http://127.0.0.1:4001/v2/keys/weather -XPUT -d value=cloudy</pre>
+
+<p>If we define a task in our playbook that invokes the <code>etcd</code> plugin:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: look up value in etcd
+  debug: msg="{{ lookup('etcd', 'weather') }}"</pre>
+
+<p>The output looks like this:</p>
+
+<pre data-type="programlisting">TASK: [look up value in etcd] *************************************************
+ok: [localhost] =&gt; {
+    "msg": "cloudy"
+}</pre>
+
+<p>By default, the <code>etcd</code> lookup looks for the etcd server at <em>http://127.0.0.1:4001</em>, but you can change this by setting the <code>ANSIBLE_ETCD_URL</code> environment variable before invoking <code>ansible-playbook</code>.<a data-type="indexterm" data-primary="ANSIBLE_ETCD_URL environment variable"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Writing Your Own Lookup Plugin</h2>
+
+<p>You can also write your own lookup plugin if you need functionality not provided by the existing plugins.<a data-type="indexterm" data-primary="lookups" data-secondary="writing your own plugin"/> Writing a custom lookup plugin is out of scope for this book, but if you&#8217;re really interested, I suggest that you take a look at the source code for the lookup <a href="https://github.com/ansible/ansible/tree/devel/lib/ansible/plugins/lookup">plugins that ship with Ansible</a>.</p>
+
+<p>Once you&#8217;ve written your lookup plugin, place it in one of the following directories:</p>
+
+<ul>
+<li>
+<p>The <em>lookup_plugins</em> directory next to your playbook</p>
+</li>
+<li>
+<p><em>~/.ansible/plugins/lookup</em></p>
+</li>
+<li>
+<p><em>/usr/share/ansible/plugins/lookup</em></p>
+</li>
+<li>
+<p>The directory specified in your <code>ANSIBLE_LOOKUP_PLUGINS</code> environment variable<a data-type="indexterm" data-primary="ANSIBLE_LOOKUP_PLUGINS environment variable"/><a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="lookups" data-startref="ix_playbkadvLU"/><a data-type="indexterm" data-primary="lookups" data-startref="ix_lookup"/></p>
+</li>
+</ul>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>More Complicated Loops</h1>
+
+<p>Up until this point, whenever we&#8217;ve written a task that iterates over a list of items, we&#8217;ve used the <code>with_items</code> clause to specify a list of items.<a data-type="indexterm" id="ix_playbkadvloop" data-primary="playbooks" data-secondary="advanced features" data-tertiary="more complicated loops"/><a data-type="indexterm" id="ix_loopcomp" data-primary="loops" data-secondary="more complicated"/> Although this is the most common way to do loops, Ansible supports other mechanisms for iteration. <a data-type="xref" href="#looping_constructs"/> provides a summary of the constructs that are available.<a data-type="indexterm" data-primary="loops" data-secondary="more complicated" data-tertiary="available looping constructs in Ansible"/></p>
+<table id="looping_constructs">
+<caption>Looping constructs</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Input</th>
+<th>Looping strategy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>with_items</p></td>
+<td><p>List</p></td>
+<td><p>Loop over list elements</p></td>
+</tr>
+<tr>
+<td><p>with_lines</p></td>
+<td><p>Command to execute</p></td>
+<td><p>Loop over lines in command output</p></td>
+</tr>
+<tr>
+<td><p>with_fileglob</p></td>
+<td><p>Glob</p></td>
+<td><p>Loop over filenames</p></td>
+</tr>
+<tr>
+<td><p>with_first_found</p></td>
+<td><p>List of paths</p></td>
+<td><p>First file in input that exists</p></td>
+</tr>
+<tr>
+<td><p>with_dict</p></td>
+<td><p>Dictionary</p></td>
+<td><p>Loop over dictionary elements</p></td>
+</tr>
+<tr>
+<td><p>with_flattened</p></td>
+<td><p>List of lists</p></td>
+<td><p>Loop over flattened list</p></td>
+</tr>
+<tr>
+<td><p>with_indexed_items</p></td>
+<td><p>List</p></td>
+<td><p>Single iteration</p></td>
+</tr>
+<tr>
+<td><p>with_nested</p></td>
+<td><p>List</p></td>
+<td><p>Nested loop</p></td>
+</tr>
+<tr>
+<td><p>with_random_choice</p></td>
+<td><p>List</p></td>
+<td><p>Single iteration</p></td>
+</tr>
+<tr>
+<td><p>with_sequence</p></td>
+<td><p>Sequence of integers</p></td>
+<td><p>Loop over sequence</p></td>
+</tr>
+<tr>
+<td><p>with_subelements</p></td>
+<td><p>List of dictionaries</p></td>
+<td><p>Nested loop</p></td>
+</tr>
+<tr>
+<td><p>with_together</p></td>
+<td><p>List of lists</p></td>
+<td><p>Loop over zipped list</p></td>
+</tr>
+<tr>
+<td><p>with_inventory_hostnames</p></td>
+<td><p>Host pattern</p></td>
+<td><p>Loop over matching hosts</p></td>
+</tr>
+</tbody>
+</table>
+
+<p>The <a href="http://bit.ly/1F6kfCP">official documentation</a> covers these quite thoroughly, so I&#8217;ll show examples from just a few of them to give you a sense of how they work.</p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>with_lines</h2>
+
+<p>The <code>with_lines</code> looping construct lets you run an arbitrary command on your control machine and iterate over the output, one line at a time.<a data-type="indexterm" data-primary="with_lines looping construct"/><a data-type="indexterm" data-primary="loops" data-secondary="more complicated" data-tertiary="with_lines construct"/></p>
+
+<p>Imagine you have a file that contains a list of names, and you want to send a Slack message for each name, something like this:</p>
+
+<pre data-type="programlisting">Leslie Lamport
+Silvio Micali
+Shafi Goldwasser
+Judea Pearl</pre>
+
+<p><a data-type="xref" href="#WITH_LINES"/> shows how to use <code>with_lines</code> to read a file and
+iterate over its contents line by line.</p>
+<div id="WITH_LINES" data-type="example">
+<h5>Using with_lines as a loop</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: Send out a slack message
+  slack:
+    domain: example.slack.com
+    token: "{{ slack_token }}"
+    msg: "{{ item }} was in the list"
+  with_lines:
+    - cat files/turing.txt</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>with_fileglob</h2>
+
+<p>The <code>with_fileglob</code> construct is useful for iterating over a set of files on the control machine.<a data-type="indexterm" data-primary="loops" data-secondary="more complicated" data-tertiary="with_fileglob construct"/><a data-type="indexterm" data-primary="with_fileglob looping construct"/></p>
+
+<p><a data-type="xref" href="#WITH_FILEGLOB"/> shows how to iterate over files that end in <em>.pub</em> in the <em>/var/keys</em> directory, as well as a <em>keys</em> directory next to your playbook. It then uses the <code>file</code> lookup plugin to extract the contents of the file, which are passed to the <code>authorized_key</code> module.</p>
+<div id="WITH_FILEGLOB" data-type="example">
+<h5>Using with_fileglob to add keys</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: add public keys to account
+  authorized_key: user=deploy key="{{ lookup('file', item) }}"
+  with_fileglob:
+    - /var/keys/*.pub
+    - keys/*.pub</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>with_dict</h2>
+
+<p>The <code>with_dict</code> construct lets you iterate over a dictionary instead of a list.<a data-type="indexterm" data-primary="dictionaries" data-secondary="iteration over, using with_dict"/><a data-type="indexterm" data-primary="loops" data-secondary="more complicated" data-tertiary="with_dict construct"/><a data-type="indexterm" data-primary="with_dict looping construct"/> When you use this looping construct, the <code>item</code> loop variable is a dictionary with two keys:</p>
+<dl>
+<dt>key</dt>
+<dd>
+<p>One of the keys in the dictionary</p>
+</dd>
+<dt>value</dt>
+<dd>
+<p>The value in the dictionary that corresponds to <em>key</em></p>
+</dd>
+</dl>
+
+<p>For example, if your host has an <code>eth0</code> interface, there will be an Ansible fact named <code>ansible_eth0</code>, with a key named <code>ipv4</code> that contains a dictionary that looks something like this:</p>
+
+<pre data-type="programlisting" data-code-language="json">{
+ "address": "10.0.2.15",
+ "netmask": "255.255.255.0",
+ "network": "10.0.2.0"
+}</pre>
+
+<p>We could iterate over this dictionary and print out the entries one at a time:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja"> - name: iterate over ansible_eth0
+    debug: msg={{ item.key }}={{ item.value }}
+    with_dict: "{{ ansible_eth0.ipv4 }}"</pre>
+
+<p>The output looks like this:</p>
+
+<pre data-type="programlisting">TASK: [iterate over ansible_eth0] *********************************************
+ok: [myserver] =&gt; (item={'key': u'netmask', 'value': u'255.255.255.0'}) =&gt; {
+    "item": {
+        "key": "netmask",
+        "value": "255.255.255.0"
+    },
+    "msg": "netmask=255.255.255.0"
+}
+ok: [myserver] =&gt; (item={'key': u'network', 'value': u'10.0.2.0'}) =&gt; {
+    "item": {
+        "key": "network",
+        "value": "10.0.2.0"
+    },
+    "msg": "network=10.0.2.0"
+}
+ok: [myserver] =&gt; (item={'key': u'address', 'value': u'10.0.2.15'}) =&gt; {
+    "item": {
+        "key": "address",
+        "value": "10.0.2.15"
+    },
+    "msg": "address=10.0.2.15"
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Looping Constructs as Lookup Plugins</h2>
+
+<p>Ansible implements looping constructs as lookup plugins.<a data-type="indexterm" data-primary="lookups" data-secondary="looping constructs as lookup plugins"/><a data-type="indexterm" data-primary="loops" data-secondary="more complicated" data-tertiary="looping constructs as lookup plugins"/> You just slap a <code>with</code> at the beginning of a lookup plugin to use it in its loop form. <a data-type="indexterm" data-primary="file lookup" data-secondary="with_file form, using"/>For example, we can rewrite <a data-type="xref" href="#FILE_LOOKUP"/> by using the <code>with_file</code> form in <a data-type="xref" href="#ex-7-26"/>.</p>
+<div id="ex-7-26" data-type="example">
+<h5>Using the file lookup as a loop</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: Add my public key as an EC2 key
+  ec2_key: name=mykey key_material="{{ item }}"
+  with_file: /Users/lorin/.ssh/id_rsa.pub</pre></div>
+
+<p>Typically, you use a lookup plugin as a looping construct only if it returns a
+list, which is how I was able to separate out the plugins into <a data-type="xref" href="#lookups"/>
+(return strings) and <a data-type="xref" href="#looping_constructs"/> (return lists).<a data-type="indexterm" data-primary="loops" data-secondary="more complicated" data-startref="ix_loopcomp"/><a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="more complicated loops" data-startref="ix_playbkadvloop"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Loop Controls</h1>
+
+<p>With version 2.1, Ansible provides users with more control over loop handling.<a data-type="indexterm" id="ix_playbkadvlctrl" data-primary="playbooks" data-secondary="advanced features" data-tertiary="loop controls"/><a data-type="indexterm" id="ix_loopctrl" data-primary="loops" data-secondary="controls"/></p>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Setting the Variable Name</h2>
+
+<p>The <code>loop_var</code> control allows us to give the iteration variable a different name<a data-type="indexterm" data-primary="loops" data-secondary="controls" data-tertiary="setting variable name"/><a data-type="indexterm" data-primary="loop_var control"/><a data-type="indexterm" data-primary="variables" data-secondary="loop, setting name of"/> than the default name, <code>item</code>, as shown in <a data-type="xref" href="#loop_control_loop_var_user"/>.</p>
+<div id="loop_control_loop_var_user" data-type="example">
+<h5>Use user as loop variable</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- user:
+    name: "{{ user.name }}"
+  with_items:
+    - { name: gil }
+    - { name: sarina }
+    - { name: leanne }
+  loop_control:
+    loop_var: user</pre></div>
+
+<p>Although in <a data-type="xref" href="#loop_control_loop_var_user"/> <code>loop_var</code> provides only a cosmetic improvement, it can be essential for more advanced loops.</p>
+
+<p>In <a data-type="xref" href="#loop_control_loop_var"/>, we would like to loop over multiple tasks at once. One way to achieve that is to use <code>include</code> with <code>with_items</code>.<a data-type="indexterm" data-primary="with_items clause" data-secondary="using with include"/><a data-type="indexterm" data-primary="includes" data-secondary="using include and with_items"/></p>
+
+<p>However, the <em>vhosts.yml</em> file that is going to be included may also contain <code>with_items</code> in some tasks. This would produce a conflict, as the default <code>loop_var</code> <code>item</code> is used for <em>both</em> loops at the same time.</p>
+
+<p>To prevent a naming collision, we specify a different name for <code>loop_var</code> in the outer loop.</p>
+<div id="loop_control_loop_var" data-type="example">
+<h5>Use vhost as loop variable</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: run a set of tasks in one loop
+  include: vhosts.yml
+  with_items:
+    - { domain: www1.example.com }
+    - { domain: www2.example.com }
+    - { domain: www3.example.com }
+  loop_control:
+    loop_var: vhost <a class="co" id="co_complex_playbooks_CO1-1" href="#callout_complex_playbooks_CO1-1"><img src="callouts/1.png" alt="1"/></a></pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO1-1" href="#co_complex_playbooks_CO1-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Change the loop variable name for outer loops to prevent name collisions.</p></dd>
+</dl></div>
+
+<p>In the included task file <em>vhosts.yml</em> you see in <a data-type="xref" href="#loop_control_loop_var_included"/>, we are now able to use the default <code>loop_var</code> name <code>item</code> as we used to do.</p>
+<div id="loop_control_loop_var_included" data-type="example">
+<h5>Included file can contain a loop</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create nginx directories
+  file:
+    path: /var/www/html/{{ vhost.domain }}/{{ item }} <a class="co" id="co_complex_playbooks_CO2-1" href="#callout_complex_playbooks_CO2-1"><img src="callouts/1.png" alt="1"/></a>
+  state: directory
+  with_items:
+    - logs
+    - public_http
+    - public_https
+    - includes
+
+- name: create nginx vhost config
+  template:
+    src: "{{ vhost.domain }}.j2"
+    dest: /etc/nginx/conf.d/{{ vhost.domain }}.conf</pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO2-1" href="#co_complex_playbooks_CO2-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>We keep the default loop variable in the inner loop.</p></dd>
+</dl></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Labeling the Output</h2>
+
+<p>The <code>label</code> control was added in Ansible 2.2 and provides some control over how the loop output will be shown to the user during execution.<a data-type="indexterm" data-primary="label control"/><a data-type="indexterm" data-primary="loops" data-secondary="controls" data-tertiary="labeling output"/></p>
+
+<p>The following example contains an ordinary list of dictionaries:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create nginx vhost configs
+  template:
+    src: "{{ item.domain }}.conf.j2"
+    dest: "/etc/nginx/conf.d/{{ item.domain }}.conf
+  with_items:
+    - { domain: www1.example.com, ssl_enabled: yes }
+    - { domain: www2.example.com }
+    - { domain: www3.example.com,
+      aliases: [ edge2.www.example.com, eu.www.example.com ] }</pre>
+
+<p>By default, Ansible prints the entire dictionary in the output. For larger dictionaries, the output can be difficult to read without a <code>loop_control</code> clause that specifies a label:</p>
+
+<pre data-type="programlisting">TASK [create nginx vhost configs] **********************************************
+ok: [localhost] =&gt; (item={u'domain': u'www1.example.com', u'ssl_enabled': True})
+ok: [localhost] =&gt; (item={u'domain': u'www2.example.com'})
+ok: [localhost] =&gt; (item={u'domain': u'www3.example.com', u'aliases':
+[u'edge2.www.example.com', u'eu.www.example.com']})</pre>
+
+<p>Since we are interested only in the domain names, we can simply add a <em>label</em> in the <code>loop_control</code> clause describing what should be printed when we iterate over the items:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: create nginx vhost configs
+  template:
+    src: "{{ item.domain }}.conf.j2"
+    dest: "/etc/nginx/conf.d/{{ item.domain }}.conf"
+  with_items:
+    - { domain: www1.example.com, ssl_enabled: yes }
+    - { domain: www2.example.com }
+    - { domain: www3.example.com,
+      aliases: [ edge2.www.example.com, eu.www.example.com ] }
+  loop_control:
+    label: "for domain {{ item.domain }}" <a class="co" id="co_complex_playbooks_CO3-1" href="#callout_complex_playbooks_CO3-1"><img src="callouts/1.png" alt="1"/></a></pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO3-1" href="#co_complex_playbooks_CO3-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Adding a custom <code>label</code></p></dd>
+</dl>
+
+<p>This results in much more readable output:</p>
+
+<pre data-type="programlisting">TASK [create nginx vhost configs] **********************************************
+ok: [localhost] =&gt; (item=for domain www1.example.com)
+ok: [localhost] =&gt; (item=for domain www2.example.com)
+ok: [localhost] =&gt; (item=for domain www3.example.com)</pre>
+<div data-type="warning">
+<p>Keep in mind that running in verbose mode <code>-v</code> will show the full dictionary; don&#8217;t use it to hide your passwords! Set <code>no_log: true</code> on the task instead.</p>
+</div>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Includes</h1>
+
+<p>The <code>include</code> feature allows you to include tasks or even whole playbooks, depending on where you define an include.<a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="loop controls" data-startref="ix_playbkadvlctrl"/><a data-type="indexterm" data-primary="loops" data-secondary="controls" data-startref="ix_loopctrl"/> It is often used in roles to separate or even group tasks and task arguments to each task in the included file.<a data-type="indexterm" id="ix_playbkadvinc" data-primary="playbooks" data-secondary="advanced features" data-tertiary="includes"/><a data-type="indexterm" id="ix_incl" data-primary="includes"/></p>
+
+<p>Let&#8217;s consider an example. <a data-type="xref" href="#WITHOUT_INCLUDE"/> contains two tasks of a play that share an identical <code>tag</code>, a <code>when</code> condition, and a <code>become</code> argument.<a data-type="indexterm" data-primary="tasks" data-secondary="with identical arguments, without includes"/></p>
+<div id="WITHOUT_INCLUDE" data-type="example">
+<h5>Identical arguments</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install nginx
+  package:
+    name: nginx
+  tags: nginx <a class="co" id="co_complex_playbooks_CO4-1" href="#callout_complex_playbooks_CO4-1"><img src="callouts/1.png" alt="1"/></a>
+  become: yes <a class="co" id="co_complex_playbooks_CO4-2" href="#callout_complex_playbooks_CO4-2"><img src="callouts/2.png" alt="2"/></a>
+  when: ansible_os_family == 'RedHat' <a class="co" id="co_complex_playbooks_CO4-3" href="#callout_complex_playbooks_CO4-3"><img src="callouts/3.png" alt="3"/></a>
+
+- name: ensure nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+  tags: nginx <a class="co" id="co_complex_playbooks_CO4-4" href="#callout_complex_playbooks_CO4-1"><img src="callouts/1.png" alt="1"/></a>
+  become: yes <a class="co" id="co_complex_playbooks_CO4-5" href="#callout_complex_playbooks_CO4-2"><img src="callouts/2.png" alt="2"/></a>
+  when: ansible_os_family == 'RedHat' <a class="co" id="co_complex_playbooks_CO4-6" href="#callout_complex_playbooks_CO4-3"><img src="callouts/3.png" alt="3"/></a></pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO4-1" href="#co_complex_playbooks_CO4-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Identical <code>tags</code></p></dd>
+<dt><a class="co" id="callout_complex_playbooks_CO4-2" href="#co_complex_playbooks_CO4-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Identical <code>become</code></p></dd>
+<dt><a class="co" id="callout_complex_playbooks_CO4-3" href="#co_complex_playbooks_CO4-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>Identical condition</p></dd>
+</dl></div>
+
+<p>When we separate these two tasks in a file as in <a data-type="xref" href="#WITH_INCLUDE_SEPARATE_TASKS"/> and use <code>include</code> as in <a data-type="xref" href="#WITH_INCLUDE"/>, we can simplify the play by adding the task arguments<a data-type="indexterm" data-primary="tasks" data-secondary="with identical arguments, with includes"/> only to the <code>include</code> task.</p>
+<div id="WITH_INCLUDE_SEPARATE_TASKS" data-type="example">
+<h5>Separate tasks into a different file</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install nginx
+  package:
+    name: nginx
+
+- name: ensure nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: yes</pre></div>
+<div id="WITH_INCLUDE" data-type="example">
+<h5>Using an include for the tasks file applying the arguments in common</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- include: nginx_include.yml
+  tags: nginx
+  become: yes
+  when: ansible_os_family == 'RedHat'</pre></div>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Dynamic Includes</h2>
+
+<p>A common pattern in roles is to define tasks specific to a particular operating system into separate task files.<a data-type="indexterm" data-primary="includes" data-secondary="dynamic"/><a data-type="indexterm" data-primary="dynamic includes"/> Depending on the number of operating systems supported by the role, this can lead to a lot of boilerplate for the <code>include</code> tasks.</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- include: Redhat.yml
+  when: ansible_os_family == 'Redhat'
+
+- include: Debian.yml
+  when: ansible_os_family == 'Debian'</pre>
+
+<p>Since version 2.0, Ansible allows<a data-type="indexterm" data-primary="variable substitution, using for dynamic includes"/> us to dynamically include a file by using variable substitution:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- include: "{{ ansible_os_family }}.yml"
+  static: no</pre>
+
+<p>However, there<a data-type="indexterm" data-primary="ansible-playbook --list-tasks command" data-secondary="dynamic includes and"/><a data-type="indexterm" data-primary="tasks" data-secondary="from dynamic includes, listing with ansible-playbook"/> is a drawback to using dynamic includes: <code>ansible-playbook --list-tasks</code> might not list the tasks from a dynamic include if Ansible does not have enough information to populate the variables that determine which file will be included. For example, fact variables (see <a data-type="xref" href="#variables_and_facts"/>) are not populated when the <span class="keep-together"><code>--list-tasks</code></span> argument is used.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>Role Includes</h2>
+
+<p>A special include is the <code>include_role</code> clause.<a data-type="indexterm" data-primary="roles" data-secondary="include_role clause"/><a data-type="indexterm" data-primary="includes" data-secondary="role"/><a data-type="indexterm" data-primary="include_role clause"/> In contrast with the <code>role</code> clause, which will use all parts of the role, the <code>include_role</code> not only allows us to selectively choose what parts of a role will be included and used, but also where in the play.</p>
+
+<p>Similarly to the <code>include</code> clause, the mode can be static or dynamic, and Ansible does a best guess as to what is needed. However, we can always append <code>static</code> to enforce the desired mode.</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install nginx
+  yum:
+    pkg: nginx
+
+- name: install php
+  include_role:
+    name: php <a class="co" id="co_complex_playbooks_CO5-1" href="#callout_complex_playbooks_CO5-1"><img src="callouts/1.png" alt="1"/></a>
+
+- name: configure nginx
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf</pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO5-1" href="#co_complex_playbooks_CO5-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Include and run <em>main.yml</em> from the <code>php</code> role.</p></dd>
+</dl>
+<div data-type="note">
+<p>The <code>include_role</code> clause makes the handlers available as well.</p>
+</div>
+
+<p>The <code>include_role</code> clause can also help to avoid the hassle of parts of roles depending on each other.<a data-type="indexterm" data-primary="dependent roles" data-secondary="include_role clause and"/> Imagine that in the role dependency, which runs before the main role, a file task changes the owner of a file. But the system user used as the owner does not yet exist at that point. It will be created later in the main role during a package <span class="keep-together">installation</span>.</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">- name: install nginx
+  yum:
+    pkg: nginx
+
+- name: install php
+  include_role:
+    name: php
+    tasks_from: install <a class="co" id="co_complex_playbooks_CO6-1" href="#callout_complex_playbooks_CO6-1"><img src="callouts/1.png" alt="1"/></a>
+
+- name: configure nginx
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+
+- name: configure php
+  include_role:
+    name: php
+    tasks_from: configure <a class="co" id="co_complex_playbooks_CO6-2" href="#callout_complex_playbooks_CO6-2"><img src="callouts/2.png" alt="2"/></a></pre>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO6-1" href="#co_complex_playbooks_CO6-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Include and run <em>install.yml</em> from the <code>php</code> role.</p></dd>
+<dt><a class="co" id="callout_complex_playbooks_CO6-2" href="#co_complex_playbooks_CO6-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Include and run <em>configure.yml</em> from the <code>php</code> role.</p></dd>
+</dl>
+<div data-type="note">
+<p>At the time of writing, the <code>include_role</code> clause is still labeled as <em>preview</em>,  which means there is no guarantee of a backward-compatible interface.</p>
+</div>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Blocks</h1>
+
+<p>Much like the <code>include</code> clause, the <code>block</code> clause provides a mechanism for grouping tasks.<a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="includes" data-startref="ix_playbkadvinc"/><a data-type="indexterm" data-primary="includes" data-startref="ix_incl"/><a data-type="indexterm" data-primary="blocks"/><a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="blocks"/> The <code>block</code> clause allows you to set conditions or arguments for all tasks within a block at once:</p>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja" class="pagebreak-before">- block:
+  - name: install nginx
+    package:
+      name: nginx
+  - name: ensure nginx is running
+    service:
+      name: nginx
+      state: started
+      enabled: yes
+  become: yes
+  when: "ansible_os_family == 'RedHat'"</pre>
+<div data-type="note">
+<p>Unlike an <code>include</code> clause, looping over a <code>block</code> clause is currently not supported.</p>
+</div>
+
+<p>The <code>block</code> clause has an even more interesting application: error handling.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Error Handling with Blocks</h1>
+
+<p>Dealing with error scenarios has always been a challenge.<a data-type="indexterm" id="ix_blockerr" data-primary="blocks" data-secondary="error handling with"/><a data-type="indexterm" id="ix_errblock" data-primary="error handling with blocks"/><a data-type="indexterm" id="ix_playbkadverr" data-primary="playbooks" data-secondary="advanced features" data-tertiary="error handling with blocks"/> Historically, Ansible has been error agnostic in the sense that errors and failures may occur on a host. Ansible&#8217;s default error-handling behavior is to take a host out of the play if a task fails and continue as long as there are hosts remaining that haven&#8217;t encountered errors.</p>
+
+<p>In combination with the <code>serial</code> and <code>max_fail_percentage</code> clause, Ansible gives you some control over when a play has to be declared as failed.<a data-type="indexterm" data-primary="plays" data-secondary="declaring as failed"/><a data-type="indexterm" data-primary="max_fail_percentage clause"/><a data-type="indexterm" data-primary="serial clause"/></p>
+
+<p>With the <code>blocks</code> clause as shown in <a data-type="xref" href="#appupgrade_yml"/>, Ansible advances error handling a bit further and lets us automate recovery and rollback of tasks in case of a failure.</p>
+<div id="appupgrade_yml" data-type="example">
+<h5>app-upgrade.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- block: <a class="co" id="co_complex_playbooks_CO7-1" href="#callout_complex_playbooks_CO7-1"><img src="callouts/1.png" alt="1"/></a>
+  - debug: msg="You will see a failed tasks right after this"
+  - command: /bin/false
+  - debug: "You won't see this message"
+  rescue: <a class="co" id="co_complex_playbooks_CO7-2" href="#callout_complex_playbooks_CO7-2"><img src="callouts/2.png" alt="2"/></a>
+  - debug: "You only see this message in case of an failure in the block"
+  always: <a class="co" id="co_complex_playbooks_CO7-3" href="#callout_complex_playbooks_CO7-3"><img src="callouts/3.png" alt="3"/></a>
+  - debug: "This will be always executed"</pre></div>
+<dl class="calloutlist">
+<dt><a class="co" id="callout_complex_playbooks_CO7-1" href="#co_complex_playbooks_CO7-1"><img src="callouts/1.png" alt="1"/></a></dt>
+<dd><p>Start of the <code>block</code> clause</p></dd>
+<dt><a class="co" id="callout_complex_playbooks_CO7-2" href="#co_complex_playbooks_CO7-2"><img src="callouts/2.png" alt="2"/></a></dt>
+<dd><p>Tasks to be executed in case of a failure in <code>block</code> clause</p></dd>
+<dt><a class="co" id="callout_complex_playbooks_CO7-3" href="#co_complex_playbooks_CO7-3"><img src="callouts/3.png" alt="3"/></a></dt>
+<dd><p>Tasks to always be executed</p></dd>
+</dl>
+
+<p>If you have some programming experience, the way error handling is implemented may remind you of the <em>try-catch-finally</em> paradigm, and it works much the same way.</p>
+
+<p>To demonstrate how this can work, we start with a daily business job: upgrading an application. The application is distributed in a cluster of virtual machines (VMs) and deployed on an IaaS cloud (<a href="http://cloudstack.apache.org">Apache CloudStack</a>).<a data-type="indexterm" data-primary="infrastructure-as-a-service (IaaS) clouds" data-secondary="Apache CloudStack"/><a data-type="indexterm" data-primary="Apache CloudStack"/> Furthermore, the cloud provides the functionality to snapshot a VM. The simplified playbook looks like the<a data-type="indexterm" data-primary="load balancers" data-secondary="taking a VM out of"/> following:</p>
+<ol>
+<li>
+<p>Take VM out of the load balancer.</p>
+</li>
+<li>
+<p>Create a VM snapshot before the app upgrade.</p>
+</li>
+<li>
+<p>Upgrade the application.</p>
+</li>
+<li>
+<p>Run smoke tests.</p>
+</li>
+<li>
+<p>Roll back when something goes wrong.</p>
+</li>
+<li>
+<p>Move VM back to the load balancer.</p>
+</li>
+<li>
+<p>Clean up and remove the VM snapshot.</p>
+</li>
+
+</ol>
+
+<p>Let&#8217;s put these tasks into a playbook, still simplified and not yet runnable, as shown in <a data-type="xref" href="#app_upgrade_yml_2"/>.</p>
+<div id="app_upgrade_yml_2" data-type="example">
+<h5>app-upgrade.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: app-servers
+  serial: 1
+  tasks:
+  - name: Take VM out of the load balancer
+  - name: Create a VM snapshot before the app upgrade
+
+  - block:
+    - name: Upgrade the application
+    - name: Run smoke tests
+
+    rescue:
+    - name: Revert a VM to the snapshot after a failed upgrade
+
+    always:
+    - name: Re-add webserver to the loadbalancer
+    - name: Remove a VM snapshot</pre></div>
+
+<p>In this playbook, we will most certainly end up with a running VM being a member of a load balancer cluster, even if the upgrade fails.</p>
+<div data-type="warning">
+<p>The tasks under the <code>always</code> clause will be executed even if an error occurred in the <code>rescue</code> clause! Be careful what you put in the <code>always</code> clause.<a data-type="indexterm" data-primary="always clause"/><a data-type="indexterm" data-primary="rescue clause"/></p>
+</div>
+
+<p>In case <a data-type="indexterm" data-primary="load balancers" data-secondary="getting upgraded VMs back to"/>we want to get only upgraded VMs back to the load balancer cluster, the play would look a bit different, as shown in <a data-type="xref" href="#appup_3"/>.</p>
+<div id="appup_3" data-type="example">
+<h5>app-upgrade.yml</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: app-servers
+  serial: 1
+  tasks:
+  - name: Take VM out of the load balancer
+  - name: Create a VM snapshot before the app upgrade
+
+  - block:
+    - name: Upgrade the application
+    - name: Run smoke tests
+
+    rescue:
+    - name: Revert a VM to the snapshot after a failed upgrade
+
+  - name: Re-add webserver to the loadbalancer
+  - name: Remove a VM snapshot</pre></div>
+
+<p>We removed the <code>always</code> clause and put the two tasks at the end of the play. This ensures that the two tasks will be executed only if the rescue went through. As a result, we get only upgraded VMs back to the load balancer.</p>
+
+<p>The final playbook looks like <a data-type="xref" href="#block_error_handling_full_playbook"/>.</p>
+<div id="block_error_handling_full_playbook" data-type="example">
+<h5>Error-agnostic application-upgrade playbook</h5>
+
+<pre data-type="programlisting" data-code-language="yaml+jinja">---
+- hosts: app-servers
+  serial: 1
+  tasks:
+  - name: Take app server out of the load balancer
+    local_action:
+      module: cs_loadbalancer_rule_member
+      name: balance_http
+      vm: "{{ inventory_hostname_short }}"
+      state: absent
+  - name: Create a VM snapshot before an upgrade
+    local_action:
+      module: cs_vmsnapshot
+      name: Snapshot before upgrade
+      vm: "{{ inventory_hostname_short }}"
+      snapshot_memory: yes
+
+  - block:
+    - name: Upgrade the application
+      script: upgrade-app.sh
+    - name: Run smoke tests
+      script: smoke-tests.sh
+
+    rescue:
+    - name: Revert the VM to a snapshot after a failed upgrade
+      local_action:
+        module: cs_vmsnapshot
+        name: Snapshot before upgrade
+        vm: "{{ inventory_hostname_short }}"
+        state: revert
+
+  - name: Re-add app server to the loadbalancer
+    local_action:
+      module: cs_loadbalancer_rule_member
+      name: balance_http
+      vm: "{{ inventory_hostname_short }}"
+      state: present
+  - name: Remove a VM snapshot after successful upgrade or successful rollback
+    local_action:
+      module: cs_vmsnapshot
+      name: Snapshot before upgrade
+      vm: "{{ inventory_hostname_short }}"
+      state: absent</pre></div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Encrypting Sensitive Data with Vault</h1>
+
+<p>Our Mezzanine playbook requires access to sensitive information, such as database and administrator passwords.<a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="error handling with blocks" data-startref="ix_playbkadverr"/><a data-type="indexterm" data-primary="error handling with blocks" data-startref="ix_errblock"/><a data-type="indexterm" data-primary="blocks" data-secondary="error handling with" data-startref="ix_blockerr"/> We dealt with this in <a data-type="xref" href="#deploying_mezzanine"/> by putting all of the sensitive information in a separate file called <em>secrets.yml</em> and making sure that we didn&#8217;t check this file into our version-control repository.<a data-type="indexterm" id="ix_playbkadvencr" data-primary="playbooks" data-secondary="advanced features" data-tertiary="encrypting sensitive data with vault"/><a data-type="indexterm" id="ix_vault" data-primary="vault, encrypting sensitive data with"/><a data-type="indexterm" id="ix_ansvault" data-primary="ansible-vault command-line tool"/></p>
+
+<p>Ansible provides an alternative solution: instead of keeping the <em>secrets.yml</em> file out of version control, we can commit an encrypted version. That way, even if our version-control repository were compromised, the attacker would not have access to the contents of the <em>secrets.yml</em> file unless he also had the password used for the encryption.</p>
+
+<p>The <code>ansible-vault</code> command-line tool allows you to create and edit an encrypted file that <code>ansible-playbook</code> will recognize and decrypt automatically, given the <span class="keep-together">password</span>.</p>
+
+<p>We can encrypt an existing file like this:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-vault encrypt secrets.yml</pre>
+
+<p>Alternately, we can create a new encrypted <em>secrets.yml</em> file:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-vault create secrets.yml</pre>
+
+<p>You will be prompted for a password, and then <code>ansible-vault</code> will launch a
+text editor so that you can populate the file.<a data-type="indexterm" data-primary="text editors"/><a data-type="indexterm" data-primary="EDITOR environment variable"/> It launches the editor specified
+in the <code>$EDITOR</code> environment variable. If that variable is not defined, it
+defaults to <code>vim</code>.</p>
+
+<p><a data-type="xref" href="#ansible_vault_encrypted_file"/> shows an example of the contents of a file
+encrypted using <code>ansible-vault</code>.</p>
+<div id="ansible_vault_encrypted_file" data-type="example">
+<h5>Contents of file encrypted with ansible-vault</h5>
+
+<pre data-type="programlisting">$ANSIBLE_VAULT;1.1;AES256
+34306434353230663665633539363736353836333936383931316434343030316366653331363262
+6630633366383135386266333030393634303664613662350a623837663462393031626233376232
+31613735376632333231626661663766626239333738356532393162303863393033303666383530
+...
+62346633343464313330383832646531623338633438336465323166626335623639383363643438
+64636665366538343038383031656461613665663265633066396438333165653436</pre></div>
+
+<p>You can use the <code>vars_files</code> section of a play to reference a file encrypted with <code>ansible-vault</code> the same
+way you would access a regular file: we would not need to modify
+<a data-type="xref" href="#full_mezzanine_playbook"/> at all if we encrypted the <em>secrets.yml</em> file.</p>
+
+<p>We do need to tell <code>ansible-playbook</code> to prompt us for the password of the
+encrypted file, or it will simply error out.<a data-type="indexterm" data-primary="ansible-playbook --ask-vault-pass command"/> Do so by using the
+<code>--ask-vault-pass</code> argument:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook mezzanine.yml --ask-vault-pass</pre>
+
+<p>You can also store the password in a text file and tell <code>ansible-playbook</code> the
+location of this password file by using the <code>--vault-password-file</code> flag:</p>
+
+<pre data-type="programlisting" data-code-language="console">$ ansible-playbook mezzanine --vault-password-file ~/password.txt</pre>
+
+<p>If the argument to <code>--vault-password-file</code> has the executable bit set, Ansible
+will execute it and use the contents of <code>standard out</code> as the vault password. This
+allows you to use a script to provide the password to Ansible.</p>
+
+<p><a data-type="xref" href="#vault_table"/> shows the available <code>ansible-vault</code> commands.<a data-type="indexterm" data-primary="ansible-vault command-line tool" data-secondary="list of commands"/><a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-tertiary="encrypting sensitive data with vault" data-startref="ix_playbkadvencr"/><a data-type="indexterm" data-primary="ansible-vault command-line tool" data-startref="ix_ansvault"/><a data-type="indexterm" data-primary="vault, encrypting sensitive data with" data-startref="ix_vault"/><a data-type="indexterm" data-primary="playbooks" data-secondary="advanced features" data-startref="ix_playbkadv"/></p>
+<table id="vault_table">
+<caption>ansible-vault commands</caption>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>ansible-vault encrypt <em>file.yml</em></p></td>
+<td><p>Encrypt the plain-text <em>file.yml</em> file</p></td>
+</tr>
+<tr>
+<td><p>ansible-vault decrypt <em>file.yml</em></p></td>
+<td><p>Decrypt the encrypted <em>file.yml</em> file</p></td>
+</tr>
+<tr>
+<td><p>ansible-vault view <em>file.yml</em></p></td>
+<td><p>Print the contents of the encrypted <em>file.yml</em> file</p></td>
+</tr>
+<tr>
+<td><p>ansible-vault create <em>file.yml</em></p></td>
+<td><p>Create a new encrypted <em>file.yml</em> file</p></td>
+</tr>
+<tr>
+<td><p>ansible-vault edit <em>file.yml</em></p></td>
+<td><p>Edit an encrypted <em>file.yml</em> file</p></td>
+</tr>
+<tr>
+<td><p>ansible-vault rekey <em>file.yml</em></p></td>
+<td><p>Change the password on an encrypted <em>file.yml</em> file</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+
+
+
+
+
+
+
+</section>

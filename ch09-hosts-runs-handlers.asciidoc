@@ -1,0 +1,981 @@
+[[more_on_playbooks_b]]
+== Customizing Hosts, Runs, and Handlers
+
+Sometimes Ansible's default behaviors don't quite fit your use case. In this chapter, we cover Ansible features that provide customization
+by controlling which hosts to run against, how tasks are run, and how handlers are
+run.
+
+[[PATTERNS]]
+=== Patterns for Specifying Hosts
+
+So far, the +host+ parameter in our plays has specified a single ((("hosts", "patterns for specifying")))host or group, like this:
+[source,yaml+jinja]
+----
+hosts: web
+----
+
+Instead of specifying a single host or((("patterns"))) group, you can specify a _pattern_. You've already seen the +all+ pattern, which will run a play against all known hosts:
+[source,yaml+jinja]
+----
+hosts: all
+----
+
+You can specify a union of two groups with a colon. You specify all dev and staging machines as follows:
+[source,yaml+jinja]
+----
+hosts: dev:staging
+----
+
+You can specify an intersection by using a colon and ampersand. For example, to specify all of the database servers in your staging environment, you might do this:
+[source,yaml+jinja]
+----
+hosts: staging:&database
+----
+
+<<supported_patterns>> shows the patterns that Ansible supports.((("patterns", "supported by Ansible"))) Note that the
+regular expression pattern always starts with a tilde.
+
+[role="pagebreak-before"]
+[[supported_patterns]]
+.Supported patterns
+[options="header"]
+|==========================================================
+|Action                    |Example usage
+|All hosts                 |+all+
+|All hosts                 |+*+
+|Union                     |+dev:staging+
+|Intersection              |+staging:&database+
+|Exclusion                 |+dev:!queue+
+|Wildcard                  |+*.example.com+
+|Range of numbered servers |+web[5:10]+
+|Regular expression        |pass:[<code>~web\d+\.example\.(com&#x7c;org)</code>]
+|==========================================================
+
+Ansible supports multiple combinations of patterns—for example:
+[source,yaml+jinja]
+----
+hosts: dev:staging:&database:!queue
+----
+
+
+=== Limiting Which Hosts Run
+
+Use the +-l hosts+ or +--limit hosts+ flag to tell Ansible to limit the hosts to run the playbook against the specified list of hosts,((("hosts", "limiting which hosts run"))) as shown in <<ex-7-12>>.
+
+[[ex-7-12]]
+.Limiting which hosts run
+====
+[source,console]
+----
+$ ansible-playbook -l hosts playbook.yml
+$ ansible-playbook --limit hosts playbook.yml
+
+----
+====
+
+You can use the pattern syntax just described to specify arbitrary
+combinations of hosts.((("patterns", "specifying arbitrary combinations of hosts"))) For example:
+[source,console]
+----
+$ ansible-playbook -l 'staging:&database' playbook.yml
+----
+
+
+=== Running a Task on the Control Machine
+
+Sometimes you want to run a particular task on the control machine instead of
+on the remote host.((("tasks", "running on control machine"))) Ansible provides the +local_action+ clause for tasks to
+support this.((("local_action clause")))
+
+Imagine that the server we want to install Mezzanine onto has just booted, so
+that if we run our playbook too soon, it will error out because the server
+hasn't fully started up yet.((("wait_for module"))) We could start off our playbook by invoking the +wait_for+ module to wait until
+the SSH server is ready to accept connections before we execute the rest
+of the playbook. In this case, we want this module to execute on our laptop, not
+on the remote host.
+
+The first task of our playbook has to start off like this:
+
+[source,yaml+jinja]
+----
+- name: wait for ssh server to be running
+  local_action: wait_for port=22 host="{{ inventory_hostname }}"
+    search_regex=OpenSSH
+----
+
+Note that we're referencing +inventory_hostname+ in this task, which evaluates to the name of the remote
+host, not +localhost+. ((("inventory_hostname variable")))That's because the scope of these variables is still the
+remote host, even though the task is executing locally.
+
+[TIP]
+====
+If your play involves multiple hosts, and you use +local_action+, the task will be executed multiple times, one for each host. You can restrict this by using +run_once+, as described in <<run_once>>.
+====
+
+=== Running a Task on a Machine Other Than the Host
+
+Sometimes you want to run a task that's associated with a host, but you want to
+execute the task on a different server.((("tasks", "running on machine other than the host"))) You can use the +delegate_to+ clause to
+run the task on a different host.((("delegate_to clause")))
+
+Two common use cases are as follows:
+
+* Enabling host-based alerts with an alerting system such as Nagios
+* Adding a host to a load balancer such as HAProxy
+
+
+For example, imagine we want to enable Nagios alerts for all of the hosts in our +web+ group.((("Nagios, using delegate_to with"))) Assume we have an entry in our inventory named _nagios.example.com_ that is running Nagios. <<delegate_to>> shows an example that uses +delegate_to+.
+
+
+[[delegate_to]]
+.Using delegate_to with Nagios
+====
+[source,yaml+jinja]
+----
+- name: enable alerts for web servers
+  hosts: web
+  tasks:
+    - name: enable alerts
+      nagios: action=enable_alerts service=web host={{ inventory_hostname }}
+      delegate_to: nagios.example.com
+
+----
+====
+
+In this example, Ansible would execute the +nagios+ task on _nagios.example.com_, but the +inventory_hostname+ variable referenced in the play would evaluate to the web host.
+
+For a more detailed example that uses +delegate_to+, see the
+_lamp_haproxy/rolling_update.yml_ example in the Ansible project's examples https://github.com/ansible/ansible-examples[GitHub repo].
+
+[[run_once]]
+=== Running on One Host at a Time
+
+By default, Ansible runs each task in parallel across all hosts. Sometimes you
+want to run your task on one host at a time.((("hosts", "running on one host at a time", id="ix_hostsone"))) The canonical example is when
+upgrading application servers that are behind a load balancer. ((("load balancers", "removing one host at a time from")))Typically, you
+take the application server out of the load balancer, upgrade it, and put it
+back. But you don't want to take all of your application servers out of the load
+balancer, or your service will become unavailable.
+
+You can use the +serial+ clause on((("serial clause", "using to restrict number of hosts"))) a play to tell Ansible to restrict the number
+of hosts that a play runs on. <<using_serial>> shows an example that removes
+hosts one at a time from ((("Amazon EC2", "elastic load balancer, removing one host at a time from")))an Amazon EC2 elastic load balancer, upgrades the
+system packages, and then puts them back into the load balancer. (We
+cover Amazon EC2 in more detail in <<cloud>>.)
+
+
+[[using_serial]]
+.Removing hosts from load balancer and upgrading packages
+====
+[source,yaml+jinja]
+----
+- name: upgrade packages on servers behind load balancer
+  hosts: myhosts
+  serial: 1
+  tasks:
+
+    - name: get the ec2 instance id and elastic load balancer id
+      ec2_facts:
+
+    - name: take the host out of the elastic load balancer
+      local_action: ec2_elb
+      args:
+        instance_id: "{{ ansible_ec2_instance_id }}"
+        state: absent
+
+    - name: upgrade packages
+      apt: update_cache=yes upgrade=yes
+
+    - name: put the host back in the elastic load balancer
+      local_action: ec2_elb
+      args:
+        instance_id: "{{ ansible_ec2_instance_id }}"
+        state: present
+        ec2_elbs: "{{ item }}"
+      with_items: ec2_elbs
+
+----
+====
+
+In our example, we pass +1+ as the argument to the +serial+ clause, telling Ansible to run on only one host at a time. If we had passed +2+, Ansible would have run two hosts at a time.
+
+Normally, when a task fails, Ansible stops running tasks against the host that fails, but continues to run against other hosts. In the load-balancing scenario, you might want Ansible to fail the entire play before all hosts have failed a task. Otherwise, you might end up with the situation where you have taken each host out of the load balancer, and have it fail, leaving no hosts left inside your load balancer.
+
+You can use a +max_fail_percentage+ clause along with the +serial+ clause to specify the maximum percentage of failed hosts before Ansible fails the entire play.((("serial clause", "using with max_fail_percentage")))((("max_fail_percentage clause", "using with serial clause"))) For example, assume that we specify a maximum fail percentage of 25%, as shown here:
+[source,yaml+jinja]
+----
+- name: upgrade packages on servers behind load balancer
+  hosts: myhosts
+  serial: 1
+  max_fail_percentage: 25
+  tasks:
+    # tasks go here
+----
+
+If we have four hosts behind the load balancer, and one of the hosts fail a
+task, then Ansible will keep executing the play, because this doesn't exceed
+the 25% threshold. However, if a second host fails a task, Ansible will fail
+the entire play, because then 50% of the hosts will have failed a task, exceeding the
+25% threshold. If you want Ansible to fail if any of the hosts fail a task,
+set the +max_fail_percentage+ to 0.((("hosts", "running on one host at a time", startref="ix_hostsone")))
+
+[[batch_of_hosts]]
+=== Running on a Batch of Hosts at a Time
+
+You can also pass `serial` a percentage value instead of a fixed number. Ansible will apply this percentage to the total number of hosts per play to determine the number of hosts per ((("serial clause", "passing a percentage to rather than a fixed value")))((("hosts", "running a batch of hosts at a time")))batch, as shown in <<using_serial_percentage>>.
+
+[[using_serial_percentage]]
+.Using a percentage value as a serial
+====
+[source,yaml+jinja]
+----
+- name: upgrade 50% of web servers
+  hosts: myhosts
+  serial: 50%
+  tasks:
+    # tasks go here
+----
+====
+
+We can get even more sophisticated. For example, you might want to run the play on one host first, to verify that the play works as expected, and then run the play on a larger number of hosts in subsequent runs.  A possible use case would be managing a large logical cluster of independent hosts; for example, 30 hosts of a content delivery network (CDN).
+
+Since version 2.2, Ansible lets you specify a list of serials to achieve this behavior.((("serial clause", "list of serials"))) The list of serial items can be either a number or a percentage, as shown in <<using_serial_as_list>>.
+
+[[using_serial_as_list]]
+.Using a list of serials
+====
+[source,yaml+jinja]
+----
+- name: configure CDN servers
+  hosts: cdn
+  serial:
+    - 1
+    - 30%
+  tasks:
+    # tasks go here
+----
+====
+
+Ansible will restrict the number of hosts on each run to the next available `serial` item unless the end of the list has been reached or there are no hosts left. This means that the last `serial` will be kept and applied to each batch run as long as there are hosts left in the play.
+
+In the preceding play with 30 CDN hosts, on the first batch run Ansible would run against one host, and on each subsequent batch run it would run against at most 30% of the hosts (e.g., 1, 10, 10, 9).
+
+=== Running Only Once
+
+Sometimes you might want a task to run only once, even if there are multiple
+hosts.((("tasks", "running only once")))((("run_once clause"))) For example, perhaps you have multiple application servers running behind
+the load balancer, and you want to run a database migration, but you need
+to run the migration on only one application server.
+
+You can use the +run_once+ clause to tell Ansible to run the command only once:
+[source,yaml+jinja]
+----
+- name: run the database migrations
+  command: /opt/run_migrations
+  run_once: true
+----
+
+Using +run_once+ can be ((("local_action clause", "using run_once with")))particularly useful when using +local_action+ if your
+playbook involves multiple hosts, and you want to run the local task only once:
+[source,yaml+jinja]
+----
+- name: run the task locally, only once
+  local_action: command /opt/my-custom-command
+  run_once: true
+----
+
+=== Running Strategies
+
+The +strategy+ clause on a play level gives you additional control over how Ansible behaves per task for all hosts.((("strategies", id="ix_strategies")))
+
+The default behavior we are already familiar with is the +linear+ strategy.((("linear strategy"))) This is the strategy in which Ansible executes one task on all hosts and waits until the task has completed (of failed) on all hosts before it executes the next task on all hosts. As a result, a task takes as much time as the slowest host takes to complete the task.
+
+Let's create a playbook, shown in <<strategy_playbook>>, to demonstrate the +strategy+ feature. We create a minimalistic +hosts+ file, shown in <<straegy_hosts>>, which contains three hosts, each having a variable +sleep_seconds+ with a different value in seconds.((("sleep_seconds, hosts with different values for")))
+
+[[straegy_hosts]]
+.Host file with three hosts having a different value for sleep_seconds
+====
+
+----
+one   sleep_seconds=1
+two   sleep_seconds=6
+three  sleep_seconds=10
+----
+====
+
+==== Linear
+
+The playbook in <<strategy_playbook>>, which we execute locally by using +connection: local+, has a play with three identical tasks. In each task, we execute +sleep+ with the time specified in +sleep_seconds+.
+
+[[strategy_playbook]]
+.Playbook in linear strategy
+====
+[source,yaml+jinja]
+----
+---
+- hosts: all
+  connection: local
+  tasks:
+  - name: first task
+    shell: sleep "{{ sleep_seconds }}"
+
+  - name: second task
+    shell: sleep "{{ sleep_seconds }}"
+
+  - name: third task
+    shell: sleep "{{ sleep_seconds }}"
+----
+====
+
+Running the playbook in the default +strategy+ as +linear+ results in the output shown in <<result_strategy_playbook_linear>>.
+
+[[result_strategy_playbook_linear]]
+.Result of the linear strategy run
+====
+----
+ $ ansible-playbook strategy.yml -i hosts
+
+PLAY [all] *********************************************************************
+
+TASK [setup] *******************************************************************
+ok: [two]
+ok: [three]
+ok: [one]
+
+TASK [first task] **************************************************************
+changed: [one]
+changed: [two]
+changed: [three]
+
+TASK [second task] *************************************************************
+changed: [one]
+changed: [two]
+changed: [three]
+
+TASK [third task] **************************************************************
+changed: [one]
+changed: [two]
+changed: [three]
+
+PLAY RECAP *********************************************************************
+one                        : ok=4    changed=3    unreachable=0    failed=0
+three                       : ok=4    changed=3    unreachable=0    failed=0
+two                        : ok=4    changed=3    unreachable=0    failed=0
+----
+====
+
+We get the ordered output we are familiar with. Note the identical order of task results, as host +one+ is always the quickest (as it sleeps the least amount of time) and host +three+ is the slowest (as it sleeps the greatest amount of time).
+
+==== Free
+
+Another strategy available in Ansible is the +free+ strategy.((("strategies", "free strategy", id="ix_strategiesfr")))((("free strategy", id="ix_freestrat"))) In contrast to +linear+, Ansible will not wait for results of the task to execute on all hosts. Instead, if a host completes one task, Ansible will execute the next task on that host.
+
+Depending on the hardware resources and network latency, one host may have executed the tasks faster than other hosts located at the end of the world. As a result, some hosts will already be configured, while others are still in the middle of the play.
+
+
+If we change the playbook to the +free+ strategy, the output changes as shown in <<strategy_playbook_free>>.
+
+[[strategy_playbook_free]]
+.Playbook in free strategy
+====
+[source,yaml+jinja]
+----
+---
+- hosts: all
+  connection: local
+  strategy: free // <1>
+  tasks:
+  - name: first task
+    shell: sleep "{{ sleep_seconds }}"
+
+  - name: second task
+    shell: sleep "{{ sleep_seconds }}"
+
+  - name: third task
+    shell: sleep "{{ sleep_seconds }}"
+----
+<1> We changed the strategy to +free+.
+====
+
+As we see in the output in <<result_strategy_playbook_free>>, host +one+ is already finished before host +three+ has even finished its first task.
+
+[[result_strategy_playbook_free]]
+.Results of running the playbook with the free strategy
+====
+----
+$ ansible-playbook strategy.yml -i hosts
+
+PLAY [all] *********************************************************************
+
+TASK [setup] *******************************************************************
+ok: [one]
+ok: [two]
+ok: [three]
+
+TASK [first task] **************************************************************
+changed: [one]
+
+TASK [second task] *************************************************************
+changed: [one]
+
+TASK [third task] **************************************************************
+changed: [one]
+
+TASK [first task] **************************************************************
+changed: [two]
+changed: [three]
+
+TASK [second task] *************************************************************
+changed: [two]
+
+TASK [third task] **************************************************************
+changed: [two]
+
+TASK [second task] *************************************************************
+changed: [three]
+
+TASK [third task] **************************************************************
+changed: [three]
+
+PLAY RECAP *********************************************************************
+one                        : ok=4    changed=3    unreachable=0    failed=0
+three                       : ok=4    changed=3    unreachable=0    failed=0
+two                        : ok=4    changed=3    unreachable=0    failed=0
+----
+====
+
+[NOTE]
+====
+In this case, the play will execute in the same amount of time in both strategies. Under certain conditions, a play in strategy `free` may take less time to finish.
+====
+
+Like many core parts in Ansible, +strategy+ is implemented as a new type of plugin.((("strategies", "free strategy", startref="ix_strategiesfr")))((("free strategy", startref="ix_freestrat")))((("strategies", startref="ix_strategies")))
+
+[[handlers_advanced]]
+=== Advanced Handlers
+
+Sometimes you'll find that Ansible's default behavior for handlers doesn't quite fit your particular use case. This subsection describes how you can gain tighter control over when your handlers fire.((("handlers", "advanced", id="ix_handadv")))
+
+==== Handlers in Pre and Post Tasks
+
+When we covered handlers, you learned that they are usually executed after all tasks, once, and only when they get notified.((("handlers", "advanced", "in pre and post tasks")))((("pre_tasks", "handlers in")))((("post_tasks", "handlers in")))((("tasks", "pre_tasks and post_tasks", "handlers in"))) But keep in mind there are not only `tasks`, but `pre_tasks`, `tasks`, and `post_tasks`.
+
+Each `tasks` section in a playbook is handled separately; any handler notified in `pre_tasks`, `tasks`, or `post_tasks` is executed at the end of each section. As a result, it is possible to execute one handler several times in one play:
+
+[source,yaml+jinja]
+.pre_post_tasks_handlers.yml
+----
+---
+- hosts: localhost
+  pre_tasks:
+  - command: echo Pre Tasks
+    notify: print message
+
+  tasks:
+  - command: echo Tasks
+    notify: print message
+
+  post_tasks:
+  - command: echo Post Tasks
+    notify: print message
+
+  handlers:
+  - name: print message
+    command: echo handler executed
+----
+
+When we run the playbook, we see the following results:
+
+----
+$ ansible-playbook pre_post_tasks_handlers.yml
+PLAY [localhost] ***************************************************************
+
+TASK [setup] *******************************************************************
+ok: [localhost]
+
+TASK [command] *****************************************************************
+changed: [localhost]
+
+RUNNING HANDLER [print message] ************************************************
+changed: [localhost]
+
+TASK [command] *****************************************************************
+changed: [localhost]
+
+RUNNING HANDLER [print message] ************************************************
+changed: [localhost]
+
+TASK [command] *****************************************************************
+changed: [localhost]
+
+RUNNING HANDLER [print message] ************************************************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=7    changed=6    unreachable=0    failed=0
+----
+
+==== Flush Handlers
+
+You may be wondering why I wrote _usually_ executed after all tasks. _Usually_, because this is the default.((("handlers", "advanced", "flush handlers"))) However, Ansible lets us control the execution point of the handlers with the help of a special module, `meta`.
+
+In <<flush_handlers>>, we see a part of an `nginx` role in which we use `meta` with `flush_handlers` in the middle of the tasks.((("meta module, using with flush_handlers")))((("Nginx", "nginx role configuration with flush handlers")))((("flush_handlers")))
+
+We do this for two reasons:
+
+1. We would like to clean up some old Nginx vhost data, which we can remove only if no process is using it anymore (e.g., after the service restart).
+
+2. We want to run some _smoke tests_ and validate a health check URL returning OK if the application is in a healthy state. But validating the healthy state before the restart of the services would not make that much sense.
+
+<<flush_handlers_nginx_configuration>> shows the configuration of the +nginx+ role: the host and port of the health check, a list of vhosts with a name and a template, and some deprecated vhosts that we want to ensure have been removed:
+
+[[flush_handlers_nginx_configuration]]
+.Configuration for the nginx role
+====
+[source,yaml]
+----
+nginx_healthcheck_host: health.example.com
+nginx_healthcheck_port: 8080
+
+vhosts:
+  - name: www.example.com
+    template: default.conf.j2
+
+absent_vhosts:
+  - obsolete.example.com
+  - www2.example.com
+----
+====
+
+In the tasks file of the role _roles/nginx/tasks/main.yml_ as in <<flush_handlers>>, we put the `meta` tasks with the corresponding argument `flush_handlers` between our normal tasks, but just where we want it to be: before the health check task and the cleanup task.
+
+[[flush_handlers]]
+.Clean up and validate health checks after the service restart
+====
+[source,yaml+jinja]
+.flush_handlers.yml
+----
+---
+- name: install nginx
+  yum:
+    pkg: nginx
+  notify: restart nginx
+
+- name: configure nginx vhosts
+  template:
+    src: conf.d/{{ item.template | default(item.name) }}.conf.j2
+    dest: /etc/nginx/conf.d/{{ item.name }}.conf
+  with_items: "{{ vhosts }}"
+  when: item.name not in vhosts_absent
+  notify: restart nginx
+
+- name: removed unused nginx vhosts
+  file:
+    path: /etc/nginx/conf.d/{{ item }}.conf
+    state: absent
+  with_items: "{{ vhosts_absent }}"
+  notify: restart nginx
+
+- name: validate nginx config // <1>
+  command: nginx -t
+  changed_when: false
+  check_mode: false
+
+- name: flush the handlers
+  meta: flush_handlers // <2>
+
+- name: remove unused vhost directory
+  file:
+    path: /srv/www/{{ item }} state=absent
+  when: item not in vhosts
+  with_items: "{{ vhosts_absent }}"
+
+- name: check healthcheck // <3>
+  local_action:
+    module: uri
+    url: http://{{ nginx_healthcheck_host }}:{{ nginx_healthcheck_port }}/healthcheck
+    return_content: true
+  retries: 10
+  delay: 5
+  register: webpage
+
+- fail:
+    msg: "fail if healthcheck is not ok"
+  when: not webpage|skipped and webpage|success and "ok" not in webpage.content
+----
+<1> Validating the configuration just before flushing the handlers
+<2> Flushing handlers between tasks
+<3> Running smoke tests to see if all went well. Note this could be a dynamic page validating that an application has access to a database.
+====
+
+==== Handlers Listen
+
+Before Ansible 2.2, there was only one way to notify a handler: by calling `notify` on the handler's name.((("notify clause", "calling on handlers")))((("handlers", "advanced", "listen feature", id="ix_handadvlis")))((("listen clause (handlers)", id="ix_listenhand"))) This is simple and works well for most use cases.
+
+Before we go into details about how the handlers listen feature can simplify your playbooks and roles, let's see a quick example of handlers listen:
+
+----
+---
+- hosts: mailservers
+  tasks:
+    - copy:
+        src: main.conf
+        dest: /etc/postfix/main.cnf
+      notify: postfix config changed // <1>
+
+  handlers:
+    - name: restart postfix
+      service: name=postfix state=restarted
+      listen: postfix config changed // <1>
+----
+<1> You notify like an _event_ on which you listen to on one or more handlers.
+
+The `listen` clause defines what we'll call an _event_, on which one or more handlers can listen.((("events, handlers listening on"))) This decouples the task notification key from the handler's name.
+To notify more handlers to the same event, we just let these additional handlers listen on the same event, and they will also get notified.
+
+
+[NOTE]
+====
+The scope of all handlers is on the play level. We cannot notify across plays, with or without handlers listen.
+====
+
+===== Handlers listen: The SSL case
+
+The real benefit of handlers listen is related to role and role dependencies.((("listen clause (handlers)", "SSL use case", id="ix_listenhandSSL")))((("SSL certificates, managing using handlers listen", id="ix_SSLcerthl"))) One of the most obvious use cases I have come across is managing SSL certificates for different services.
+
+Because we use SSL heavily in our hosts and across projects, it makes sense to make an SSL role. It is a simple role whose only purpose is to copy our SSL certificates and keys to the remote host. It does this in a few tasks, as in _roles/ssl/tasks/main.yml_ in <<ssl_role_tasks>>, and it is prepared to run on Red Hat–based Linux operating systems because it has the appropriate paths set in the variables file _roles/ssl/vars/RedHat.yml_ in <<ssl_role_variables>>.
+
+[[ssl_role_tasks]]
+.Role tasks in the SSL role
+====
+[source,yaml+jinja]
+.ssl/tasks/main.yml
+----
+---
+- name: include OS specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- name: copy SSL certs
+  copy:
+    src: "{{ item }}"
+    dest: {{ ssl_certs_path }}/
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ ssl_certs }}"
+
+- name: copy SSL keys
+  copy:
+    src: "{{ item }}"
+    dest: "{{ ssl_keys_path }}/"
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ ssl_keys }}"
+  no_log: true
+----
+====
+
+[[ssl_role_variables]]
+.Variables for Red Hat–based systems
+====
+[source,yaml+jinja]
+.ssl/vars/RedHat.yml
+----
+---
+ssl_certs_path: /etc/pki/tls/certs
+ssl_keys_path: /etc/pki/tls/private
+----
+====
+
+In the definition of the role defaults in <<ssl_role_defaults>>, we have empty lists of SSL certificates and keys, so no certificates and keys will be handled. We have options for overwriting these defaults to make the role copy the files.
+
+[[ssl_role_defaults]]
+.Defaults of the SSL role
+====
+[source,yaml+jinja]
+.ssl/defaults/main.yml
+----
+---
+ssl_certs: []
+ssl_keys: []
+----
+====
+
+At this point, we can use the SSL role in((("roles", "dependent", "SSL role")))((("dependent roles", "SSL role, use case"))) other roles as a _dependency_, just as we do in <<nginx_role_ssl_dependency>> for an `nginx` role by modifying the file _roles/nginx/meta/main.yml_. Every role dependency will run before the parent role. This means in our case that the SSL role tasks will be executed before the `nginx` role tasks. As a result, the SSL certificates and keys are already in place and usable within the `nginx` role (e.g., in the _vhost_ config).
+
+[[nginx_role_ssl_dependency]]
+.The nginx role depends on SSL
+====
+[source,yaml+jinja]
+.nginx/meta/main.yml
+----
+---
+dependencies:
+  - role: ssl
+----
+====
+
+Logically, the dependency would be one way: the `nginx` role((("roles", "dependent", "one-way dependency"))) depends on the `ssl` role, as shown in <<nginx_ssl_dependency>>.
+
+[[nginx_ssl_dependency]]
+.One-way dependency
+image::images/aur2_0901.png["Nginx role dependency"]
+
+Our `nginx` role would, of course, handle all aspects of the web server `nginx`. This role has tasks in _roles/nginx/tasks/main.yml_ as in <<nginx_role_tasks>> for templating the _nginx_ config and restarting the _nginx_ service by notifying the appropriate handler by its name.
+
+[role="pagebreak-before"]
+[[nginx_role_tasks]]
+.Tasks in the nginx role
+====
+[source,yaml+jinja]
+.nginx/tasks/main.yml
+----
+---
+- name: configure nginx
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+  notify: restart nginx // <1>
+----
+====
+<1> Notify the handler for restarting the _nginx_ service.
+
+As you would expect, the corresponding handler for the `nginx` role in _roles/nginx/handlers/main.yml_ looks like <<nginx_role_handlers>>.
+
+[[nginx_role_handlers]]
+.Handlers in the nginx role
+====
+[source,yaml+jinja]
+.nginx/handlers/main.yml
+----
+---
+- name: restart nginx // <1>
+  service:
+    name: nginx
+    state: restarted
+----
+====
+<1> `Restart nginx` restarts the Nginx service.
+
+That's it, right? Not quite. The SSL certificates need to be replaced once in a while. And when they get replaced, every service consuming an SSL certificate must be restarted to make use of the new certificate.
+
+So how should we do that? Notify to `restart nginx` in the SSL role, I hear you say? OK, let's try.
+
+We edit _roles/ssl/tasks/main.yml_ of our SSL role to append the `notify` clause for restarting Nginx to the tasks ((("notify clause", "appending to tasks to restart Nginx")))of copying the certificates and keys, as in <<ssl_role_tasks_notify>>.
+
+[[ssl_role_tasks_notify]]
+.Append notify to the tasks to restart Nginx
+====
+[source,yaml+jinja]
+.ssl/tasks/main.yml
+----
+---
+- name: include OS specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- name: copy SSL certs
+  copy:
+    src: "{{ item }}"
+    dest: {{ ssl_certs_path }}/
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ ssl_certs }}"
+  notify: restart nginx // <1>
+
+- name: copy SSL keys
+  copy:
+    src: "{{ item }}"
+    dest: "{{ ssl_keys_path }}/"
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ ssl_keys }}"
+  no_log: true
+  notify: restart nginx // <1>
+----
+====
+<1> Notify the handler in the `nginx` role.
+
+Great, that works! But wait, we just added a new dependency to our SSL role: the `nginx` role, as shown in <<nginx_ssl_dependency_graph>>.
+
+[[nginx_ssl_dependency_graph]]
+.The nginx role depends on the SSL role, and the SSL role depends on the nginx role
+image::images/aur2_0902.png["SSL role dependency"]
+
+What are the consequences of this? If we use the SSL role for other roles as a dependency, the way we use it for `nginx` (e.g., for `postfix`, `dovecot`, or `ldap`, to name just a few possibilities), Ansible will complain about notifying an undefined handler, because `restart nginx` will not be defined within these roles.
+
+[NOTE]
+====
+Ansible in version 1.9 complained about notifying undefined handlers. This behavior was reimplemented in Ansible version 2.2 as it was seen as a regression bug. However, this behavior can be configured in _ansible.cfg_ with `error_on_missing_handler`. ((("error_on_missing_handler")))The default is `error_on_missing_handler = True`.
+====
+
+Further, we would need to add more handler names to be notified for every additional role where we use the SSL role as a dependency. This simply wouldn't scale well.
+
+This is the point((("events, handlers listening on"))) where handlers listen comes into the game! Instead of notifying a handler's name in the SSL role, we notify an _event_—for example, `ssl_certs_changed`, as in <<ssl_role_notify_event>>.
+
+[[ssl_role_notify_event]]
+.Notify an event to listen in handlers 
+====
+[source,yaml+jinja]
+.ssl/tasks/main.yml
+----
+---
+- name: include OS specific variables
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- name: copy SSL certs
+  copy:
+    src: "{{ item }}"
+    dest: "{{ ssl_certs_path }}/"
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ ssl_certs }}"
+  notify: ssl_certs_changed // <1>
+
+- name: copy SSL keys
+  copy:
+    src: "{{ item }}"
+    dest: "{{ ssl_keys_path }}/"
+    owner: root
+    group: root
+    mode: 0644
+  with_items: "{{ ssl_keys }}"
+  no_log: true
+  notify: ssl_certs_changed // <1>
+----
+====
+<1> Notify the event `ssl_certs_changed`
+
+As mentioned, Ansible will still complain about notifying an undefined handler but making Ansible happy again is as simple as adding a no-op handler to the SSL role, as shown in <<ssl_role_no_op_handler_listen>>.
+
+[[ssl_role_no_op_handler_listen]]
+.Add a no-op handler to the SSL role to listen to the event
+====
+[source,yaml+jinja]
+.ssl/handlers/main.yml
+----
+---
+- name: SSL certs changed
+  debug:
+    msg: SSL changed event triggered
+  listen: ssl_certs_changed // <1>
+----
+====
+<1> Listens to the event `ssl_certs_changed`
+
+Back to our `nginx` role, where we want to react to the `ssl_certs_changed` event and restart the Nginx service when a certificate has been replaced. Because we already have an appropriate handler that does the job, we simply append the +listen+ clause to the corresponding handler, as in <<nginx_role_handlers_listen>>.
+
+[[nginx_role_handlers_listen]]
+.Append the listen clause to the existing handler in the nginx role
+====
+[source,yaml+jinja]
+.nginx/handlers/main.yml
+----
+---
+- name: restart nginx
+  service:
+    name: nginx
+    state: restarted
+  listen: ssl_certs_changed // <1>
+----
+====
+<1> Append the +listen+ clause to the existing handler.
+
+When we look back to our dependency graph, things looks a bit different, as shown in <<ssl_role_dependency_restored>>. We restored the one-way dependency and are able to reuse the `ssl` role in other roles just as we use it in the `nginx` role.
+
+[[ssl_role_dependency_restored]]
+.Use the ssl role in other roles
+image::images/aur2_0903.png["ssl role dependency in other roles"]
+
+One last note for role creators having roles on Ansible Galaxy: consider adding handlers listen and event notification to your Ansible roles where it makes sense.((("SSL certificates, managing using handlers listen", startref="ix_SSLcerthl")))((("listen clause (handlers)", "SSL use case", startref="ix_listenhandSSL")))((("handlers", "advanced", "listen feature", startref="ix_handadvlis")))((("listen clause (handlers)", startref="ix_listenhand")))((("handlers", "advanced", startref="ix_handadv")))
+
+=== Manually Gathering Facts
+
+If it's possible that the SSH server wasn't yet running when we started our playbook, we need to turn off explicit fact gathering;((("facts", "gathering manually"))) otherwise, Ansible will try to SSH to the host to gather facts before running the first tasks. Because we still need access to facts (recall that we use the +ansible_env+ fact in our playbook), we can explicitly invoke the +setup+ module to get Ansible to gather our facts, ((("setup module", "invoking explicitly to gather facts")))as shown in <<waiting_for_ssh_server>>.
+
+[[waiting_for_ssh_server]]
+.Waiting for SSH server to come up
+====
+[source,yaml+jinja]
+----
+- name: Deploy mezzanine
+  hosts: web
+  gather_facts: False
+  # vars & vars_files section not shown here
+  tasks:
+    - name: wait for ssh server to be running
+      local_action: wait_for port=22 host="{{ inventory_hostname }}"
+        search_regex=OpenSSH
+
+    - name: gather facts
+      setup:
+   # The rest of the tasks go here
+
+----
+====
+
+=== Retrieving the IP Address from the Host
+
+In our playbook, several of the hostnames we use are derived from the IP address((("IP addresses", "retrieving from hosts")))((("hosts", "retrieving IP address from")))
+of the web server:
+[source,yaml+jinja]
+----
+live_hostname: 192.168.33.10.xip.io
+domains:
+  - 192.168.33.10.xip.io
+  - www.192.168.33.10.xip.io
+----
+
+
+What if we want to use the same scheme but not hardcode the IP addresses into
+the variables? That way, if the IP address of the web server changes, we don't
+have to modify our playbook.
+
+Ansible retrieves the IP address of each host and stores it as a
+fact.((("ansible_eth0 fact")))((("eth0 network interface"))) Each network interface has an associated Ansible fact. For example, details about network interface +eth0+ are stored in the +ansible_eth0+ fact, an example of which is shown in <<ansible_eth0>>.
+
+[[ansible_eth0]]
+.ansible_eth0 fact
+====
+[source,json]
+----
+"ansible_eth0": {
+    "active": true,
+    "device": "eth0",
+    "ipv4": {
+        "address": "10.0.2.15",
+        "netmask": "255.255.255.0",
+        "network": "10.0.2.0"
+    },
+    "ipv6": [
+        {
+            "address": "fe80::a00:27ff:fefe:1e4d",
+            "prefix": "64",
+            "scope": "link"
+        }
+    ],
+    "macaddress": "08:00:27:fe:1e:4d",
+    "module": "e1000",
+    "mtu": 1500,
+    "promisc": false,
+    "type": "ether"
+}
+----
+====
+
+
+Our Vagrant box has two interfaces, +eth0+ and +eth1+. The +eth0+ interface is a
+private interface whose IP address (_10.0.2.15_) we cannot reach. The +eth1+ interface is the one((("eth1 network interface")))
+that has the IP address we've assigned in our Vagrantfile (_192.168.33.10_).
+
+We can define our variables like this:
+[source,yaml+jinja]
+----
+live_hostname: "{{ ansible_eth1.ipv4.address }}.xip.io"
+domains:
+  - "{{ ansible_eth1.ipv4.address }}.xip.io"
+  - "www.{{ ansible_eth1.ipv4.address }}.xip.io"
+----

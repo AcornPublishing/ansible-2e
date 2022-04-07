@@ -1,0 +1,254 @@
+[[introducing_mezzanine]]
+== Introducing Mezzanine: pass:[<span class="keep-together">Our Test Application</span>]
+
+<<playbooks_a_beginning>> covered the basics of writing playbooks. But
+real life is always messier than introductory chapters of programming books, so in this chapter
+we're going to work through a complete example of deploying a nontrivial
+application.((("Mezzanine")))
+
+Our example application is an open source content management system (CMS) called http://mezzanine.jupo.org[Mezzanine], which is similar in spirit to
+WordPress. Mezzanine is built on top of Django, the free Python-based framework for writing web applications.
+
+=== Why Deploying to Production Is Complicated
+
+Let's take a little detour and talk about the differences between
+running software in development mode on your laptop versus running the software
+in production.((("Mezzanine", "running in development mode"))) Mezzanine is a great example of an application that is much easier to run in
+development mode than it is to deploy. <<mezzanine_dev_mode>> shows all you need
+to do to get Mezzanine running on your laptop.footnote:[This installs the Python packages into a virtualenv. We cover virtualenvs in
+<<installing_mezzanine_virtualenv>>.]
+
+[[mezzanine_dev_mode]]
+.Running Mezzanine in development mode
+====
+[source,console]
+----
+$ virtualenv venv
+$ source venv/bin/activate
+$ pip install mezzanine
+$ mezzanine-project myproject
+$ cd myproject
+$ sed -i.bak 's/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ["127.0.0.1"]/' myproject\
+/settings.py
+$ python manage.py createdb
+$ python manage.py runserver
+
+----
+====
+
+You'll be prompted to answer several questions. I answered "yes" to each yes/no
+question, and accepted the default answer whenever one was available. This was
+what my interaction looked like:
+
+----
+Operations to perform:
+  Apply all migrations: admin, auth, blog, conf, contenttypes, core,
+  django_comments, forms, galleries, generic, pages, redirects, sessions, sites,
+  twitter
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying sites.0001_initial... OK
+  Applying blog.0001_initial... OK
+  Applying blog.0002_auto_20150527_1555... OK
+  Applying conf.0001_initial... OK
+  Applying core.0001_initial... OK
+  Applying core.0002_auto_20150414_2140... OK
+  Applying django_comments.0001_initial... OK
+  Applying django_comments.0002_update_user_email_field_length... OK
+  Applying django_comments.0003_add_submit_date_index... OK
+  Applying pages.0001_initial... OK
+  Applying forms.0001_initial... OK
+  Applying forms.0002_auto_20141227_0224... OK
+  Applying forms.0003_emailfield... OK
+  Applying forms.0004_auto_20150517_0510... OK
+  Applying forms.0005_auto_20151026_1600... OK
+  Applying galleries.0001_initial... OK
+  Applying galleries.0002_auto_20141227_0224... OK
+  Applying generic.0001_initial... OK
+  Applying generic.0002_auto_20141227_0224... OK
+  Applying pages.0002_auto_20141227_0224... OK
+  Applying pages.0003_auto_20150527_1555... OK
+  Applying redirects.0001_initial... OK
+  Applying sessions.0001_initial... OK
+  Applying sites.0002_alter_domain_unique... OK
+  Applying twitter.0001_initial... OK
+
+A site record is required.
+Please enter the domain and optional port in the format 'domain:port'.
+For example 'localhost:8000' or 'www.example.com'.
+Hit enter to use the default (127.0.0.1:8000):
+
+Creating default site record: 127.0.0.1:8000 ...
+
+
+Creating default account ...
+
+Username (leave blank to use 'lorin'):
+Email address: lorin@ansiblebook.com
+Password:
+Password (again):
+Superuser created successfully.
+Installed 2 object(s) from 1 fixture(s)
+
+Would you like to install some initial demo pages?
+Eg: About us, Contact form, Gallery. (yes/no): yes
+----
+
+
+You should eventually see output on the terminal that looks like this:
+
+
+----
+              .....
+          _d^^^^^^^^^b_
+       .d''           ``b.
+     .p'                `q.
+    .d'                   `b.
+   .d'                     `b.   * Mezzanine 4.2.2
+   ::                       ::   * Django 1.10.2
+  ::    M E Z Z A N I N E    ::  * Python 3.5.2
+   ::                       ::   * SQLite 3.14.1
+   `p.                     .q'   * Darwin 16.0.0
+    `p.                   .q'
+     `b.                 .d'
+       `q..          ..p'
+          ^q........p^
+              ''''
+
+Performing system checks...
+
+System check identified no issues (0 silenced).
+October 04, 2016 - 04:57:44
+Django version 1.10.2, using settings 'myproject.settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.
+----
+
+
+If you point your browser to http://127.0.0.1:8000/, you should see
+a web page that looks like <<mezzanine_figure>>.
+
+
+[[mezzanine_figure]]
+.Mezzanine after a fresh install
+image::images/aur2_0501.png["Mezzanine screenshot"]
+
+Deploying this application to
+production is another matter. When you run the +mezzanine-project+ command,
+Mezzanine will generate a http://www.fabfile.org[Fabric] deployment ((("mezzanine-project program")))((("Fabric deployment scripts")))script at
+_myproject/fabfile.py_ that you can use to deploy your project to a production
+server.  (Fabric is a Python-based tool that helps automate running tasks via
+SSH.) The script is almost 700 lines
+long, and that's not counting the included configuration files that are also
+involved in deployment. Why is deploying to production so much more complex? I'm
+glad you asked.
+
+When run in development, Mezzanine provides the following simplifications (see <<django_dev_arch>>):
+
+* The system uses SQLite as the backend database, and will create the database file if it doesn't exist.((("SQLite", id="sql5", range="startofrange")))
+* The development HTTP server serves up both the static content (images, _.css_ files, JavaScript) as well as the dynamically generated HTML.
+* The development HTTP server uses the (insecure) HTTP, not (secure) HTTPS.
+* The development HTTP server process runs in the foreground, taking over your terminal window.
+* The hostname for the HTTP server is always 127.0.0.1 (+localhost+).
+
+[[django_dev_arch]]
+.Django app in development mode
+image::images/aur2_0502.png["Running Django app in development mode"]
+
+
+Now, let's look at what happens when you deploy to production.((("Django", "running an app in development mode")))
+
+==== PostgreSQL: The Database
+
+SQLite is a serverless database.((("Mezzanine", "deploying to production", "Gunicorn application server")))((("PostgreSQL", "to production")))((("PostgreSQL")))(((range="endofrange", startref="sql5"))) In production, we want to run a
+server-based database, because those have better support for multiple, concurrent requests, and server-based databases allow us to run multiple HTTP servers for load balancing. This means we need to deploy a database management system such as MySQL or PostgreSQL (aka Postgres). Setting up one of these database servers requires more work. We need to do the following:
+
+. Install the database software.
+. Ensure the database service is running.
+. Create the database inside the database management system.
+. Create a database user who has the appropriate permissions for the database pass:[<span class="keep-together">system.</span>]
+. Configure our Mezzanine application with the database user credentials and connection information.
+
+==== Gunicorn: The Application Server
+
+Because Mezzanine is a Django-based application, you can run Mezzanine using Django's HTTP server, referred as the _development server_ in ((("development server")))the
+Django documentation.((("Mezzanine", "Gunicorn application server")))((("application server (Gunicorn)")))((("Gunicorn (application server)"))) Here's what the Django 1.10 docs have to say about the http://bit.ly/2cPe8X8[development server].
+
+[quote]
+____
+[D]on’t use this server in anything resembling a production environment. It's
+intended only for use while developing. (We’re in the business of making Web
+frameworks, not Web servers.)
+____
+
+Django implements the ((("Web Server Gateway Interface (WSGI)")))((("WSGI (Web Server Gateway Interface)")))standard Web Server Gateway Interface
+(WSGI),footnote:[The WSGI protocol is documented in https://www.python.org/dev/peps/pep-3333[Python Enhancement Proposal (PEP) 3333].] so any Python
+HTTP server that supports WSGI is suitable for running a Django application such as Mezzanine. We'll use Gunicorn, one of the most popular HTTP WSGI
+servers, which is what the Mezzanine deploy script uses.
+
+////
+This is irrelevant detail
+
+
+The Gunicorn service runs as multiple processes. Gunicorn worker processes
+service the http requests, and a central Gunicorn process manages the workers.
+You can configure the number of worker processes that run, and the Gunicorn
+documentation recommends using twice the number of cores, plus one, for the
+number of workers. For example, a four-core server would run nine Gunicorn
+workers.
+////
+
+==== Nginx: The Web Server
+
+Gunicorn will execute our Django application, just like the development server
+does. ((("static assets")))((("Mezzanine", "deploying to production", "Nginx web server")))((("Nginx", "web server for Mezzanine application")))However, Gunicorn won't serve any of the static assets associated with the
+application. _Static assets_ are files such as images, _.css_ files, and
+JavaScript files. They are called static because they never change, in contrast
+with the dynamically generated web pages that Gunicorn serves up.
+
+Although Gunicorn can handle TLS encryption, it's common to configure Nginx to handle the encryption.footnote:[Gunicorn 0.17 added support for TLS encryption. Before that, you had to use a separate application such as Nginx to handle the encryption.]
+
+We're going to use Nginx as our web server for serving static assets and for
+handling the TLS encryption, as shown in <<nginx_reverse_proxy_image>>. 
+
+[[nginx_reverse_proxy_image]]
+.Nginx as a reverse proxy
+image::images/aur2_0503.png["Nginx as a reverse proxy"]
+
+We
+need to configure Nginx as a _reverse proxy_ for Gunicorn.((("reverse proxy"))) If the request is for
+a static asset, such as a _.css_ file, Nginx will serve that file directly
+from the local filesystem. Otherwise, Nginx will proxy the request to Gunicorn,
+by making an HTTP request against the Gunicorn service that is running on the
+local machine. Nginx uses the URL to determine whether to serve a local file or
+proxy the request to Gunicorn.  Note that requests to Nginx will be (encrypted)
+HTTPS, and all requests that Nginx proxies to Gunicorn will be (unencrypted)
+HTTP.
+
+==== Supervisor: The Process Manager
+
+When we run in development mode, we run the application server in the foreground
+of our terminal.((("Mezzanine", "deploying to production", "Supervisor process manager"))) If we were to close our terminal, the program would
+terminate. For a server application, we need it to run as a background process
+so it doesn't terminate, even if we close the terminal session we used to
+start the process.((("background process, server application running in")))
+
+The colloquial terms for such a process are  _daemon_ or _service_.((("daemons")))((("services"))) We need to run Gunicorn as
+a daemon, and we'd like to be able to easily stop it and restart it. Numerous service managers can do this job. We're going to use
+Supervisor, because that's what the Mezzanine deployment scripts use.((("Supervisor (service manager)")))
+
+
+At this point, you should have a sense of the steps involved in deploying
+a web application to production. We'll go over how to implement this deployment with Ansible in <<deploying_mezzanine>>.
+

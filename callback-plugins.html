@@ -1,0 +1,1035 @@
+<section data-type="chapter" id="CALLBACK_PLUGINS">
+<h1>Callback Plugins</h1>
+
+
+<p>Ansible supports a feature called <em>callback plugins</em> that can perform custom
+actions in response to Ansible events such as a play starting or a task
+completing on a host.<a data-type="indexterm" id="ix_callpl" data-primary="callback plugins"/> You can use a callback plugin to do things such as send a
+Slack message or write an entry to a remote logging server. In fact, the output you see in your terminal when you execute an Ansible
+playbook is implemented as a callback plugin.<a data-type="indexterm" id="ix_stdopl" data-primary="stdout plugins"/></p>
+
+<p>Ansible supports two kinds of callback plugins:</p>
+
+<ul>
+<li>
+<p><em>Stdout plugins</em> affect the output displayed to the terminal</p>
+</li>
+<li>
+<p><em>Other plugins</em> do things other than change displayed output.</p>
+</li>
+</ul>
+<div data-type="note">
+<p>Technically, there are three types of <a data-type="indexterm" data-primary="notifications, plugins for"/><a data-type="indexterm" data-primary="aggregate plugins"/>callback plugins, not two:</p>
+
+<ul>
+<li>
+<p>Stdout</p>
+</li>
+<li>
+<p>Notification</p>
+</li>
+<li>
+<p>Aggregate</p>
+</li>
+</ul>
+
+<p>However, since Ansible&#8217;s implementation makes no distinction between notification and aggregate plugins,
+we combine notification and aggregate plugins into a single category called <em>other</em> plugins.</p>
+</div>
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Stdout Plugins</h1>
+
+<p>A <em>stdout</em> plugin controls the format of the output displayed to the terminal.
+Only a single stdout plugin can be active at a time.<a data-type="indexterm" id="ix_callplstdo" data-primary="callback plugins" data-secondary="stdout"/></p>
+
+<p>You specify a stdout callback by setting the <code>stdout_callback</code> parameter in the <code>defaults</code> section of <em>ansible.cfg</em>.<a data-type="indexterm" data-primary="stdout_plugin parameter"/> For example, to
+select the <code>actionable</code> plugin:</p>
+
+<pre data-type="programlisting">[defaults]
+stdout_callback = actionable</pre>
+
+<p>Ansible supports the stdout<a data-type="indexterm" data-primary="stdout plugins" data-secondary="supported by Ansible"/> plugins in <a data-type="xref" href="#stdout_plugins"/>.</p>
+<table id="stdout_plugins">
+<caption>Stdout plugins</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>actionable</p></td>
+<td><p>Show only changed or failed</p></td>
+</tr>
+<tr>
+<td><p>debug</p></td>
+<td><p>Human-readable stderr and stdout</p></td>
+</tr>
+<tr>
+<td><p>default</p></td>
+<td><p>Show default output</p></td>
+</tr>
+<tr>
+<td><p>dense</p></td>
+<td><p>Overwrite output instead of scrolling</p></td>
+</tr>
+<tr>
+<td><p>json</p></td>
+<td><p>JSON output</p></td>
+</tr>
+<tr>
+<td><p>minimal</p></td>
+<td><p>Show task results with minimal formatting</p></td>
+</tr>
+<tr>
+<td><p>oneline</p></td>
+<td><p>Like minimal, but on a single line</p></td>
+</tr>
+<tr>
+<td><p>selective</p></td>
+<td><p>Show only output for tagged tasks</p></td>
+</tr>
+<tr>
+<td><p>skippy</p></td>
+<td><p>Suppress output for skipped hosts</p></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>actionable</h2>
+
+<p>The <code>actionable</code> plugin shows output when <a data-type="indexterm" data-primary="actionable plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="actionable"/>a task runs against a host only if the
+task changes the state of the host or fails. This makes the output less noisy.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>debug</h2>
+
+<p>The <code>debug</code> plugin makes it easier to read stdout and stderr returned by tasks,
+which can be helpful for debugging.<a data-type="indexterm" data-primary="debug plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="debug"/><a data-type="indexterm" data-primary="default plugin"/> The default plugin can make it difficult to
+read the <span class="keep-together">output</span>:</p>
+
+<pre data-type="programlisting">TASK [check out the repository on the host] *************************************
+fatal: [web]: FAILED! =&gt; {"changed": false, "cmd": "/usr/bin/git clone --origin o
+rigin '' /home/vagrant/mezzanine/mezzanine_example", "failed": true, "msg": "Clon
+ing into '/home/vagrant/mezzanine/mezzanine_example'...\nPermission denied (publi
+ckey).\r\nfatal: Could not read from remote repository.\n\nPlease make sure you h
+ave the correct access rights\nand the repository exists.", "rc": 128, "stderr":
+"Cloning into '/home/vagrant/mezzanine/mezzanine_example'...\nPermission denied (
+publickey).\r\nfatal: Could not read from remote repository.\n\nPlease make sure
+you have the correct access rights\nand the repository exists.\n", "stderr_lines"
+: ["Cloning into '/home/vagrant/mezzanine/mezzanine_example'...", "Permission den
+ied (publickey).", "fatal: Could not read from remote repository.", "", "Please m
+ake sure you have the correct access rights", "and the repository exists."], "std
+out": "", "stdout_lines": []}</pre>
+
+<p>With the <code>debug</code> plugin, the formatting is much easier to read:</p>
+
+<pre data-type="programlisting">TASK [check out the repository on the host] *************************************
+fatal: [web]: FAILED! =&gt; {
+    "changed": false,
+    "cmd": "/usr/bin/git clone --origin origin '' /home/vagrant/mezzanine/mezzani
+    ne_example",
+    "failed": true,
+    "rc": 128
+}
+
+STDERR:
+
+Cloning into '/home/vagrant/mezzanine/mezzanine_example'...
+Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+
+
+
+MSG:
+
+Cloning into '/home/vagrant/mezzanine/mezzanine_example'...
+Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>dense</h2>
+
+<p>The <code>dense</code> plugin (new in Ansible 2.3) always shows only two lines of output.<a data-type="indexterm" data-primary="dense plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="dense"/> It overwrites the
+existing lines rather than scrolling:</p>
+
+<pre data-type="programlisting">PLAY 1: CONFIGURE WEBSERVER WITH NGINX
+task 6: testserver</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>json</h2>
+
+<p>The <code>json</code> plugin generates machine-readable JSON as output.<a data-type="indexterm" data-primary="json plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="json"/> This is useful if
+you want to process the Ansible output by using a script. Note that this callback
+will not generate output until the entire playbook has finished executing.</p>
+
+<p>The JSON output is too verbose to show here, but here is a partial example:</p>
+
+<pre data-type="programlisting">{
+ "plays": [
+  "play": {
+    "id": "a45e60df-95f9-5a33-6619-000000000002"
+    "name": "Configure webserver with nginx",
+  },
+  "tasks": [
+   {
+    "task": {
+     "name": "install nginx",
+     "id": "a45e60df-95f9-5a33-6619-000000000004"
+    }
+    "hosts": {
+     "testserver": {
+      "changed": false,
+      "invocation": {
+       "module_args": { ... }
+     }
+    }
+   }
+  ]
+ ]
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>minimal</h2>
+
+<p>The <code>minimal</code> plugin does very little processing of the result returned from
+Ansible from an event.<a data-type="indexterm" data-primary="minimal plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="minimal"/> For example,<a data-type="indexterm" data-primary="default plugin" data-secondary="task formatting"/> whereas the default plugin formats a task
+like this:</p>
+
+<pre data-type="programlisting">TASK [create a logs directory] **********************************************
+ok: [web]</pre>
+
+<p>the <code>minimal</code> plugin outputs this:</p>
+
+<pre data-type="programlisting">web | SUCCESS =&gt; {
+    "changed": false,
+    "gid": 1000,
+    "group": "vagrant",
+    "mode": "0775",
+    "owner": "vagrant",
+    "path": "/home/vagrant/logs",
+    "size": 4096,
+    "state": "directory",
+    "uid": 1000
+}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>oneline</h2>
+
+<p>The <code>oneline</code> plugin is similar to minimal, but prints <a data-type="indexterm" data-primary="oneline plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="oneline"/>output on a single line (shown
+here on multiple lines because the text doesn&#8217;t fit on one line in the book):</p>
+
+<pre data-type="programlisting">web | SUCCESS =&gt; {"changed": false, "gid": 1000, "group": "vagrant", "mode":
+"0775", "owner": "vagrant", "path": "/home/vagrant/logs", "size": 4096, "state":
+"directory", "uid": 1000}</pre>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>selective</h2>
+
+<p>The <code>selective</code> plugin shows output only for successful tasks that have the <code>print_action</code>
+tag.<a data-type="indexterm" data-primary="print_action"/><a data-type="indexterm" data-primary="selective plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="selective"/> It always shows output for failed tasks.</p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>skippy</h2>
+
+<p>The <code>skippy</code> plugin does not show any output for hosts that are skipped.<a data-type="indexterm" data-primary="skippy plugin"/><a data-type="indexterm" data-primary="stdout plugins" data-secondary="skippy"/> Whereas
+the <code>default</code> plugin shows <code>skipping: [hostname]</code> when a host is skipped for
+a task, the <code>skippy</code> plugin suppresses that output.<a data-type="indexterm" data-primary="default plugin" data-secondary="skipping hosts"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="stdout" data-startref="ix_callplstdo"/><a data-type="indexterm" data-primary="stdout plugins" data-startref="ix_stdopl"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect1">
+<h1>Other Plugins</h1>
+
+<p>The other plugins perform a variety of actions, <a data-type="indexterm" id="ix_callploth" data-primary="callback plugins" data-secondary="other"/>such as recording execution time
+or sending a Slack notification. <a data-type="xref" href="#other_plugins"/> lists these other plugins.</p>
+
+<p>Unlike with stdout plugins, you can have multiple other plugins enabled
+at the same time. <a data-type="indexterm" data-primary="callback_whitelist setting"/>Enable the other plugins you want in <em>ansible.cfg</em> by setting <code>callback_whitelist</code>
+to a comma-separated list; for example:</p>
+
+<pre data-type="programlisting">[defaults]
+callback_whitelist = mail, slack</pre>
+
+<p>Many of these plugins have configuration options, <a data-type="indexterm" data-primary="configuration" data-secondary="options for callback plugins"/><a data-type="indexterm" data-primary="environment variables" data-secondary="configuration options for callback plugins"/>which are set via environment
+variables.</p>
+<table id="other_plugins">
+<caption>Other plugins</caption>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>foreman</p></td>
+<td><p>Send notifications to Foreman</p></td>
+</tr>
+<tr>
+<td><p>hipchat</p></td>
+<td><p>Send notifications to HipChat</p></td>
+</tr>
+<tr>
+<td><p>jabber</p></td>
+<td><p>Send notifications to Jabber</p></td>
+</tr>
+<tr>
+<td><p>junit</p></td>
+<td><p>Write JUnit-formatted XML file</p></td>
+</tr>
+<tr>
+<td><p>log_plays</p></td>
+<td><p>Log playbook results per hosts</p></td>
+</tr>
+<tr>
+<td><p>logentries</p></td>
+<td><p>Send notifications to Logentries</p></td>
+</tr>
+<tr>
+<td><p>logstash</p></td>
+<td><p>Send results to Logstash</p></td>
+</tr>
+<tr>
+<td><p>mail</p></td>
+<td><p>Send email when tasks fail</p></td>
+</tr>
+<tr>
+<td><p>osx_say</p></td>
+<td><p>Speak notifications on macOS</p></td>
+</tr>
+<tr>
+<td><p>profile_tasks</p></td>
+<td><p>Report execution time for each task</p></td>
+</tr>
+<tr>
+<td><p>slack</p></td>
+<td><p>Send notifications to Slack</p></td>
+</tr>
+<tr>
+<td><p>timer</p></td>
+<td><p>Report total execution time</p></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>foreman</h2>
+
+<p>The <code>foreman</code> plugin sends notifications to <a href="http://theforeman.org">Foreman</a>. <a data-type="xref" href="#foreman_env_vars"/> lists the environment variables used to configure this plugin.<a data-type="indexterm" data-primary="foreman plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="foreman"/></p>
+<table id="foreman_env_vars">
+<caption>foreman plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>FOREMAN_URL</p></td>
+<td><p>URL to the Foreman server</p></td>
+<td><p><code>http://localhost:3000</code></p></td>
+</tr>
+<tr>
+<td><p>FOREMAN_SSL_CERT</p></td>
+<td><p>X509 certificate to authenticate to Foreman if HTTPS is used</p></td>
+<td><p><code>/etc/foreman/client_cert.pem</code></p></td>
+</tr>
+<tr>
+<td><p>FOREMAN_SSL_KEY</p></td>
+<td><p>The corresponding private key</p></td>
+<td><p><code>/etc/foreman/client_key.pem</code></p></td>
+</tr>
+<tr>
+<td><p>FOREMAN_SSL_VERIFY</p></td>
+<td><p>Whether to verify the Foreman certificate. It can be set to 1 to verify SSL certificates using the installed CAs or to a path pointing to a CA bundle. Set to 0 to disable certificate checking.</p></td>
+<td><p><code>1</code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>hipchat</h2>
+
+<p>The <code>hipchat</code> plugin sends notifications<a data-type="indexterm" data-primary="hipchat plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="hipchat"/> to <a href="http://hipchat.com">HipChat</a>. <a data-type="xref" href="#hipchat_env_vars"/> lists the plugin&#8217;s environment variables used for configuration.</p>
+<table id="hipchat_env_vars">
+<caption>hipchat plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>HIPCHAT_TOKEN</p></td>
+<td><p>HipChat API token</p></td>
+<td><p>(<em>None</em>)</p></td>
+</tr>
+<tr>
+<td><p>HIPCHAT_ROOM</p></td>
+<td><p>HipChat room to post in</p></td>
+<td><p><code>ansible</code></p></td>
+</tr>
+<tr>
+<td><p>HIPCHAT_NAME</p></td>
+<td><p>HipChat name to post as</p></td>
+<td><p><code>ansible</code></p></td>
+</tr>
+<tr>
+<td><p>HIPCHAT_NOTIFY</p></td>
+<td><p>Add notify flag to important messages</p></td>
+<td><p><code>true</code></p></td>
+</tr>
+</tbody>
+</table>
+<div data-type="note">
+<p>You must install the<a data-type="indexterm" data-primary="Python" data-secondary="prettytable library"/><a data-type="indexterm" data-primary="prettytable library"/> Python prettytable library to use the <code>hipchat</code> plugin:</p>
+
+<pre data-type="programlisting">pip install prettytable</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>jabber</h2>
+
+<p>The <code>jabber</code> plugin sends notifications to <a href="http://jabber.org">Jabber</a>.<a data-type="indexterm" data-primary="jabber plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="jabber"/> Note that there are no default values for any of the configuration options for
+the <code>jabber</code> plugin. These options are listed in <a data-type="xref" href="#jabber_env_vars"/>.</p>
+<table id="jabber_env_vars">
+<caption>jabber plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>JABBER_SERV</p></td>
+<td><p>Hostname of Jabber server</p></td>
+</tr>
+<tr>
+<td><p>JABBER_USER</p></td>
+<td><p>Jabber username for auth</p></td>
+</tr>
+<tr>
+<td><p>JABBER_PASS</p></td>
+<td><p>Jabber password auth</p></td>
+</tr>
+<tr>
+<td><p>JABBER_TO</p></td>
+<td><p>Jabber user to send the notification to</p></td>
+</tr>
+</tbody>
+</table>
+<div data-type="note">
+<p>You must install the Python xmpp library<a data-type="indexterm" data-primary="xmpp library"/><a data-type="indexterm" data-primary="Python" data-secondary="xmpp library"/> to use the <code>jabber</code> plugin:</p>
+
+<pre data-type="programlisting">pip install git+https://github.com/ArchipelProject/xmpppy</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>junit</h2>
+
+<p>The <code>junit</code> plugin writes the results of a playbook execution to an XML file in
+JUnit format.<a data-type="indexterm" data-primary="XML files, produced by junit plugin"/><a data-type="indexterm" data-primary="junit plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="junit"/> It is configured by using the environment variables listed in <a data-type="xref" href="#junit_env_vars"/>. The plugin uses the conventions in <a data-type="xref" href="#junit_report"/> for generating the XML report.</p>
+<table id="junit_env_vars">
+<caption>junit plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>JUNIT_OUTPUT_DIR</p></td>
+<td><p>Destination directory for files</p></td>
+<td><p><code>~/.ansible.log</code></p></td>
+</tr>
+<tr>
+<td><p>JUNIT_TASK_CLASS</p></td>
+<td><p>Configure output: one class per YAML file</p></td>
+<td><p><code>false</code></p></td>
+</tr>
+</tbody>
+</table>
+<table id="junit_report">
+<caption>junit report</caption>
+<thead>
+<tr>
+<th>Ansible task output</th>
+<th>JUnit report</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>ok</p></td>
+<td><p>pass</p></td>
+</tr>
+<tr>
+<td><p>failed with EXPECTED FAILURE in the task name</p></td>
+<td><p>pass</p></td>
+</tr>
+<tr>
+<td><p>failed due to an exception</p></td>
+<td><p>error</p></td>
+</tr>
+<tr>
+<td><p>failed for other reasons</p></td>
+<td><p>failure</p></td>
+</tr>
+<tr>
+<td><p>skipped</p></td>
+<td><p>skipped</p></td>
+</tr>
+</tbody>
+</table>
+<div data-type="note">
+<p>You must install the <em>junit_xml</em> library<a data-type="indexterm" data-primary="junit_xml library"/> to use the <code>junit</code> plugin:</p>
+
+<pre data-type="programlisting">pip install junit_xml</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2" class="pagebreak-before">
+<h2>log_plays</h2>
+
+<p>The <code>log_plays</code> plugin logs the results to log files in
+<em>/var/log/ansible/hosts</em>, one log file per host.<a data-type="indexterm" data-primary="log_plays plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="log_path"/> The path is not configurable.</p>
+<div data-type="note">
+<p>Instead of using the <code>log_plays</code> plugin, you can set the <code>log_path</code> configuration
+option in <em>ansible.cfg</em>. For example:</p>
+
+<pre data-type="programlisting">[defaults]
+log_path = /var/log/ansible.log</pre>
+
+<p>This approach generates a single logfile for all hosts, whereas the plugin
+generates a separate logfile for each host.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>logentries</h2>
+
+<p>The <code>logentries</code> plugin sends the results <a data-type="indexterm" data-primary="logentries plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="logentries"/>to <a href="http://logentries.com">Logentries</a>. The plugin&#8217;s environment variables are listed in <a data-type="xref" href="#logentries_env_var"/>.</p>
+<table id="logentries_env_var">
+<caption>logentries plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>LOGENTRIES_ANSIBLE_TOKEN</p></td>
+<td><p>Logentries token</p></td>
+<td><p>(<em>None</em>)</p></td>
+</tr>
+<tr>
+<td><p>LOGENTRIES_API</p></td>
+<td><p>Hostname of Logentries endpoint</p></td>
+<td><p><code>data.logentries.com</code></p></td>
+</tr>
+<tr>
+<td><p>LOGENTRIES_PORT</p></td>
+<td><p>Logentries port</p></td>
+<td><p><code>80</code></p></td>
+</tr>
+<tr>
+<td><p>LOGENTRIES_TLS_PORT</p></td>
+<td><p>Logentries TLS port</p></td>
+<td><p><code>443</code></p></td>
+</tr>
+<tr>
+<td><p>LOGENTRIES_USE_TLS</p></td>
+<td><p>Use TLS with Logentries</p></td>
+<td><p><code>false</code></p></td>
+</tr>
+<tr>
+<td><p>LOGENTRIES_FLATTEN</p></td>
+<td><p>Flatten results</p></td>
+<td><p><code>false</code></p></td>
+</tr>
+</tbody>
+</table>
+<div data-type="note">
+<p>You must install the Python <em>certifi</em> and <em>flctdict</em> libraries <a data-type="indexterm" data-primary="Python" data-secondary="certifi and flctdict libraries"/><a data-type="indexterm" data-primary="flctdict library"/><a data-type="indexterm" data-primary="certifi library"/>to use the
+<code>logentries</code> plugin:</p>
+
+<pre data-type="programlisting">pip install certifi flatdict</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>logstash</h2>
+
+<p>The <code>logstash</code> plugin writes results to <a href="https://www.elastic.co/products/logstash">Logstash</a>.<a data-type="indexterm" data-primary="logstash plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="logstash"/>  It is configured with the environment variables listed in <a data-type="xref" href="#logstash_env_vars"/>.</p>
+<table id="logstash_env_vars" class="pagebreak-before">
+<caption>logstash plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>LOGSTASH_SERVER</p></td>
+<td><p>Logstash server hostname</p></td>
+<td><p><code>localhost</code></p></td>
+</tr>
+<tr>
+<td><p>LOGSTASH_PORT</p></td>
+<td><p>Logstash server port</p></td>
+<td><p><code>5000</code></p></td>
+</tr>
+<tr>
+<td><p>LOGSTASH_TYPE</p></td>
+<td><p>Message type</p></td>
+<td><p><code>ansible</code></p></td>
+</tr>
+</tbody>
+</table>
+<div data-type="note">
+<p>You must install the Python <em>python-logstash</em> library to use<a data-type="indexterm" data-primary="python-logstash library"/> the
+<code>logstash</code> plugin:</p>
+
+<pre data-type="programlisting">pip install python-logstash</pre>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>mail</h2>
+
+<p>The <code>mail</code> plugin sends an email whenever a task fails on a host.<a data-type="indexterm" data-primary="mail plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="mail"/> <a data-type="xref" href="#mail_env_vars"/> lists the environment variables for this plugin.</p>
+<table id="mail_env_vars">
+<caption>Mail plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>SMTPHOST</p></td>
+<td><p>SMTP server hostname</p></td>
+<td><p><code>localhost</code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>osx_say</h2>
+
+<p>The <code>osx_say</code> plugin uses the <code>say</code> program to speak notifications on macOS. It
+has no configuration options.<a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="osx_say"/><a data-type="indexterm" data-primary="macOS" data-secondary="spoken notifications, osx_say plugin"/><a data-type="indexterm" data-primary="osx_say plugin"/></p>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>profile_tasks</h2>
+
+<p>The <code>profile_tasks</code> plugin generates a summary of the execution time of individual tasks and<a data-type="indexterm" data-primary="profile_tasks plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="profile_tasks"/>
+total execution time for the playbook:</p>
+
+<pre data-type="programlisting">Saturday 22 April 2017  20:05:51 -0700 (0:00:01.465)       0:01:02.732 ********
+===============================================================================
+install nginx ---------------------------------------------------------- 57.82s
+Gathering Facts --------------------------------------------------------- 1.90s
+restart nginx ----------------------------------------------------------- 1.47s
+copy nginx config file -------------------------------------------------- 0.69s
+copy index.html --------------------------------------------------------- 0.44s
+enable configuration ---------------------------------------------------- 0.35s</pre>
+
+<p>The plugin also outputs execution time info as the tasks are running,
+displaying the following:</p>
+
+<ul class="pagebreak-before">
+<li>
+<p>Date and time that the task started</p>
+</li>
+<li>
+<p>Execution time of previous task, shown in parentheses</p>
+</li>
+<li>
+<p>Cumulative execution time for this play</p>
+</li>
+</ul>
+
+<p>Here&#8217;s an example of that output:</p>
+
+<pre data-type="programlisting">TASK [install nginx] *********************************************************
+Saturday 22 April 2017  20:09:31 -0700 (0:00:01.983)       0:00:02.030 ******
+ok: [testserver]</pre>
+
+<p><a data-type="xref" href="#profile_tasks_env_vars"/> lists the environment variables used for configuration.</p>
+<table id="profile_tasks_env_vars">
+<caption>profile-tasks plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>PROFILE_TASKS_SORT_ORDER</p></td>
+<td><p>Sort output (<code>ascending</code>, <code>none</code>)</p></td>
+<td><p><code>none</code></p></td>
+</tr>
+<tr>
+<td><p>PROFILE_TASKS_TASK_OUTPUT_LIMIT</p></td>
+<td><p>Number of tasks to show, or <code>all</code></p></td>
+<td><p><code>20</code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>slack</h2>
+
+<p>The <code>slack</code> plugin sends notifications to <a href="http://slack.com">Slack</a>.<a data-type="indexterm" data-primary="slack plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="slack"/>  <a data-type="xref" href="#slack_env_vars"/> lists the environmental variables used for configuration.</p>
+<table id="slack_env_vars">
+<caption>slack plugin environment variables</caption>
+<thead>
+<tr>
+<th>Environment var</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><p>SLACK_WEBHOOK_URL</p></td>
+<td><p>Slack webhook URL</p></td>
+<td><p>(<em>None</em>)</p></td>
+</tr>
+<tr>
+<td><p>SLACK_CHANNEL</p></td>
+<td><p>Slack room to post in</p></td>
+<td><p><code>#ansible</code></p></td>
+</tr>
+<tr>
+<td><p>SLACK_USERNAME</p></td>
+<td><p>Username to post as</p></td>
+<td><p><code>ansible</code></p></td>
+</tr>
+<tr>
+<td><p>SLACK_INVOCATION</p></td>
+<td><p>Show command-line invocation details</p></td>
+<td><p><code>false</code></p></td>
+</tr>
+</tbody>
+</table>
+<div data-type="note">
+<p>You must install the Python <em>prettytable</em> library <a data-type="indexterm" data-primary="prettytable library"/><a data-type="indexterm" data-primary="Python" data-secondary="prettytable library"/>to use the <code>slack</code> plugin.</p>
+</div>
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<section data-type="sect2">
+<h2>timer</h2>
+
+<p>The <code>timer</code> plugin outputs the total execution time of the playbook;<a data-type="indexterm" data-primary="timer plugin"/><a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-tertiary="timer"/> for
+example:</p>
+
+<pre data-type="programlisting">Playbook run took 0 days, 0 hours, 2 minutes, 16 seconds</pre>
+
+<p>You&#8217;re generally better off using the <code>profile_tasks</code> plugin<a data-type="indexterm" data-primary="profile_tasks plugin"/> instead, which also
+shows execution time per task.<a data-type="indexterm" data-primary="callback plugins" data-secondary="other" data-startref="ix_callploth"/><a data-type="indexterm" data-primary="callback plugins" data-startref="ix_callpl"/></p>
+</section>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+</section>
